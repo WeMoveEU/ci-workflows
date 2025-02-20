@@ -47,8 +47,11 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
             type=raw,value=latest,enable=${{ github.ref_name == inputs.production_branch }}
-            type=raw,value=staging,enable=${{ github.ref_name !=  inputs.production_branch }}
+            type=raw,value=staging,enable=${{ github.ref_name != inputs.production_branch }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
