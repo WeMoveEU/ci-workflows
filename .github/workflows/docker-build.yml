@@ -28,16 +28,16 @@ jobs:
         image: ${{ fromJSON(inputs.images) }}
 
     steps:
-      - name: Run shell script to prepare the build 
-        if: ${{ matrix.image.prepare }}
-        shell: bash
-        run: ${{ matrix.image.prepare }}
-      
       - uses: actions/checkout@v4.1.0
         with:
           fetch-depth: 20
           submodules: recursive
           token: ${{ secrets.personal_token || github.token }}
+
+      - name: Run shell script to prepare the build 
+        if: ${{ matrix.image.prepare }}
+        shell: bash
+        run: ${{ matrix.image.prepare }}
 
       - name: Generate image tag based on branch etc
         id: meta
