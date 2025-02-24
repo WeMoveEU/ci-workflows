@@ -4,9 +4,9 @@ on:
   workflow_call:
     inputs:
       images:
-        description: 'List of image configurations containing dockerfile and name, and prepare (bash script)'
+        description: 'List of image configurations containing dockerfile and name, and file overlay'
         type: string
-        default: '[{"dockerfile": "Dockerfile", "name": "${{github.repository}}"}]'
+        default: '[{"dockerfile": "Dockerfile", "name": "${{github.repository}}", "overlay": "artifact-name"}]'
       production_branch:
         description: 'Name of the production branch'
         type: string
@@ -17,7 +17,7 @@ on:
 
 jobs:
   release:
-    environment: ${{ (github.ref_name == inputs.production_branch) && 'production' || 'staging' }}
+#    environment: ${{ (github.ref_name == inputs.production_branch) && 'production' || 'staging' }}
     permissions:
       contents: read
       packages: write
@@ -33,11 +33,26 @@ jobs:
           fetch-depth: 20
           submodules: recursive
           token: ${{ secrets.personal_token || github.token }}
+          
+      - name: Apply overlay from an artifact
+        if: ${{ matrix.image.overlay }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.image.overlay }}
+
+      - name: Delete the overlay artifact
+        if: ${{ matrix.image.overlay }}
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: ${{ matrix.image.overlay }}
 
       - name: Run shell script to prepare the build 
         if: ${{ matrix.image.prepare }}
         shell: bash
         run: ${{ matrix.image.prepare }}
+
+
+
 
       - name: Generate image tag based on branch etc
         id: meta
