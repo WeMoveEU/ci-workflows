@@ -1,0 +1,21 @@
+# This is a Github Action configuration file for automating python package building and publishing
+# We want to use uv tool for all projects.
+
+name: Python package build and publish
+
+on:
+  workflow_call:
+
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.1.0  # Check out the repository code so the workflow can access it.    
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Run uv build # This step uses the uv tool to build the Python package.
+        run: uv build
+
