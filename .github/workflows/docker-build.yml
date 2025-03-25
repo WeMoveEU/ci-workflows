@@ -6,7 +6,7 @@ on:
       images:
         description: 'List of image configurations containing dockerfile and name, and file overlay'
         type: string
-        default: '[{"dockerfile": "Dockerfile", "name": "${{github.repository}}", "overlay": "artifact-name"}]'
+        default: '[{"dockerfile": "Dockerfile", "name": "${{github.repository}}"}]'
       production_branch:
         description: 'Name of the production branch'
         type: string
