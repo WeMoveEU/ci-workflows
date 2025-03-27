@@ -52,8 +52,6 @@ jobs:
         run: ${{ matrix.image.prepare }}
 
 
-
-
       - name: Generate image tag based on branch etc
         id: meta
         uses: docker/metadata-action@v5
@@ -82,7 +80,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: .
+          # determine path from dockerfile location
+          context: ${{matrix.image.dir || '.'}}
           push: true
           file: ${{matrix.image.dockerfile}}
           tags: ${{ steps.meta.outputs.tags }}
