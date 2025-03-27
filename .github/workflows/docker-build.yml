@@ -61,6 +61,7 @@ jobs:
           images: ghcr.io/${{matrix.image.name}}
           tags: |
             type=ref,event=branch,enable=${{ startsWith(github.ref_name, 'feature/') }}
+            type=raw,value=feature,enable=${{ startsWith(github.ref_name, 'feature/') }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
