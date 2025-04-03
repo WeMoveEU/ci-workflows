@@ -1,0 +1,57 @@
+name: Build and deploy a strapi website
+
+on:
+  workflow_call:
+    inputs:
+      backend_image:
+        description: 'Map containing image config used in images input for docker-build workflow'
+        type: string
+        default: '{"dockerfile": "backend/Dockerfile", "name": "${{github.repository}}/backend", "overlay": "backend_env_${{github.run_id}}", "dir": "backend"}'
+      frontend_image:
+        description: 'Map containing image config used in images input for docker-build workflow'
+        type: string
+        default: '{"dockerfile": "frontend/Dockerfile", "name": "${{github.repository}}/frontend", "overlay": "frontend_env_${{github.run_id}}", "dir": "frontend"}'
+      production_branch:
+        description: 'Name of the production branch'
+        type: string
+        default: 'main'
+      deploy_marker:
+        description: 'Filename in strapi public folder that means backend is deployed'
+        type: string
+    secrets:
+      personal_token:
+        description: 'Optional personal token used to checkout private repositories (current and submodules)'
+
+jobs:
+  release-backend:
+    uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@main
+    with:
+      production_branch: ${{inputs.production_branch}}
+      images: |
+        [${{inputs.backend_image}}]
+
+  wait-for-backend:
+    needs:
+      - release-backend
+    runs-on: ubuntu-latest
+    environment: ${{ (github.ref_name == vars.CI_PRODUCTION_BRANCH) && 'production' || 'staging' }}
+    steps:
+      - uses: Hardsix/action-wait-for-api@v2.0.2
+        with:
+          url: https://strapi.${{vars.DOMAIN}}/${{inputs.deploy_marker}}
+        if: ${{inputs.deploy_marker}}
+    
+
+  release-frontend:
+    needs:
+      - wait-for-backend
+    uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@main
+    with:
+      production_branch: ${{inputs.production_branch}}
+      images: |
+        [${{inputs.frontend_image}}]
+
+
+
+
+  
