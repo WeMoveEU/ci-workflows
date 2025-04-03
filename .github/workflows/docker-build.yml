@@ -56,7 +56,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{matrix.image.name}}
+          images: ghcr.io/${{matrix.image.name || github.repository}}
           tags: |
             type=ref,event=branch,enable=${{ startsWith(github.ref_name, 'feature/') }}
             type=raw,value=feature,enable=${{ startsWith(github.ref_name, 'feature/') }}
@@ -83,7 +83,7 @@ jobs:
           # determine path from dockerfile location
           context: ${{matrix.image.dir || '.'}}
           push: true
-          file: ${{matrix.image.dockerfile}}
+          file: ${{matrix.image.dockerfile || 'Dockerfile'}}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
