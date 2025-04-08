@@ -18,6 +18,10 @@ on:
       deploy_marker:
         description: 'Filename in strapi public folder that means backend is deployed'
         type: string
+      publish_only:
+        description: 'Only generate the frontend (static assets)'
+        type: boolean
+        default: false
     secrets:
       personal_token:
         description: 'Optional personal token used to checkout private repositories (current and submodules)'
@@ -25,6 +29,7 @@ on:
 jobs:
   release-backend:
     uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@main
+    if: ${{inputs.publish_only == false}}
     with:
       production_branch: ${{inputs.production_branch}}
       images: |
@@ -39,7 +44,7 @@ jobs:
       - uses: Hardsix/action-wait-for-api@v2.0.2
         with:
           url: https://strapi.${{vars.DOMAIN}}/${{inputs.deploy_marker}}
-        if: ${{inputs.deploy_marker}}
+        if: ${{inputs.deploy_marker && !inputs.publish_only}}
     
 
   release-frontend:
