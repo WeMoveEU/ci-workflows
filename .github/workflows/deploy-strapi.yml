@@ -28,7 +28,7 @@ on:
 
 jobs:
   release-backend:
-    uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@publish
+    uses: ./.github/workflows/docker-build.yml
     if: ${{inputs.publish_only == false}}
     with:
       production_branch: ${{inputs.production_branch}}
@@ -53,7 +53,7 @@ jobs:
   release-frontend:
     needs:
       - wait-for-backend
-    uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@publish
+    uses: ./.github/workflows/docker-build.yml
     with:
       production_branch: ${{inputs.production_branch}}
       dockerfile: frontend/Dockerfile
