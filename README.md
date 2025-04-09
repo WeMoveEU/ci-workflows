@@ -21,7 +21,6 @@ Please use a version such as `@v2`
 
 - **args**: Docker args (one variable or multiline format), passed to build-args input of _docker-build-push_ action.
 
-
 - **production_branch**: The name of the production branch. Default is `main`.
 
 - **personal_token**: An optional personal access token used to check out private repositories and submodules.
