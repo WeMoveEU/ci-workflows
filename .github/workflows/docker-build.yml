@@ -86,4 +86,5 @@ jobs:
           file: ${{matrix.image.dockerfile || 'Dockerfile'}}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ matrix.image.args || ''}}
 
