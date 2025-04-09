@@ -3,10 +3,27 @@ name: Docker Build and Push
 on:
   workflow_call:
     inputs:
-      images:
-        description: 'List of image configurations containing dockerfile and name, and file overlay'
+      dockerfile:
+        description: 'The Dockerfile path'
         type: string
-        default: '[{"dockerfile": "Dockerfile", "name": "${{github.repository}}"}]'
+        default: 'Dockerfile'
+      name: 
+        description: 'Image name'
+        type: string
+        default: "${{github.repository}}"
+      dir:
+        description: 'Directory where to run docker build'
+        type: string
+        default: '.'
+      overlay:
+        description: 'Artifact name to unpack over the checked out source'
+        type: string
+      prepare:
+        description: 'Shell commands to run before building'
+        type: string
+      args:
+        description: 'Docker build args'
+        type: string
       production_branch:
         description: 'Name of the production branch'
         type: string
@@ -22,10 +39,6 @@ jobs:
       contents: read
       packages: write
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        image: ${{ fromJSON(inputs.images) }}
 
     steps:
       - uses: actions/checkout@v4.1.0
@@ -35,28 +48,28 @@ jobs:
           token: ${{ secrets.personal_token || github.token }}
           
       - name: Apply overlay from an artifact
-        if: ${{ matrix.image.overlay }}
+        if: ${{ inputs.overlay }}
         uses: actions/download-artifact@v4
         with:
-          name: ${{ matrix.image.overlay }}
+          name: ${{ inputs.overlay }}
 
       - name: Delete the overlay artifact
-        if: ${{ matrix.image.overlay }}
+        if: ${{ inputs.overlay }}
         uses: geekyeggo/delete-artifact@v5
         with:
-          name: ${{ matrix.image.overlay }}
+          name: ${{ inputs.overlay }}
 
       - name: Run shell script to prepare the build 
-        if: ${{ matrix.image.prepare }}
+        if: ${{ inputs.prepare }}
         shell: bash
-        run: ${{ matrix.image.prepare }}
+        run: ${{ inputs.prepare }}
 
 
       - name: Generate image tag based on branch etc
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{matrix.image.name || github.repository}}
+          images: ghcr.io/${{inputs.name}}
           tags: |
             type=ref,event=branch,enable=${{ startsWith(github.ref_name, 'feature/') }}
             type=raw,value=feature,enable=${{ startsWith(github.ref_name, 'feature/') }}
@@ -81,9 +94,10 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           # determine path from dockerfile location
-          context: ${{matrix.image.dir || '.'}}
+          context: ${{inputs.dir}}
           push: true
-          file: ${{matrix.image.dockerfile || 'Dockerfile'}}
+          file: ${{inputs.dockerfile }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ inputs.args }}
 

@@ -3,14 +3,14 @@ name: Build and deploy a strapi website
 on:
   workflow_call:
     inputs:
-      backend_image:
-        description: 'Map containing image config used in images input for docker-build workflow'
+      backend_args:
+        description: "Docker build-args for backend image"
         type: string
-        default: '{"dockerfile": "backend/Dockerfile", "name": "${{github.repository}}/backend", "overlay": "backend_env_${{github.run_id}}", "dir": "backend"}'
-      frontend_image:
-        description: 'Map containing image config used in images input for docker-build workflow'
+        default: ''
+      frontend_args:
+        description: "Docker build-args for frontend image"
         type: string
-        default: '{"dockerfile": "frontend/Dockerfile", "name": "${{github.repository}}/frontend", "overlay": "frontend_env_${{github.run_id}}", "dir": "frontend"}'
+        default: ''
       production_branch:
         description: 'Name of the production branch'
         type: string
@@ -24,11 +24,14 @@ on:
 
 jobs:
   release-backend:
-    uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@main
+    uses: ./.github/workflows/docker-build.yml
     with:
       production_branch: ${{inputs.production_branch}}
-      images: |
-        [${{inputs.backend_image}}]
+      dockerfile: backend/Dockerfile
+      name: "${{github.repository}}/backend"
+      dir: "backend"
+      overlay: "backend_env_${{github.run_id}}"
+      args: ${{inputs.backend_args}}
 
   wait-for-backend:
     needs:
@@ -45,13 +48,14 @@ jobs:
   release-frontend:
     needs:
       - wait-for-backend
-    uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@main
+    uses: ./.github/workflows/docker-build.yml
     with:
       production_branch: ${{inputs.production_branch}}
-      images: |
-        [${{inputs.frontend_image}}]
-
-
+      dockerfile: frontend/Dockerfile
+      name: "${{github.repository}}/frontend"
+      dir: frontend
+      overlay: "frontend_env_${{github.run_id}}"
+      args: ${{inputs.frontend_args}}
 
 
   
