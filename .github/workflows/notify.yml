@@ -11,8 +11,7 @@ jobs:
       - name: Notify Slack
         uses: slackapi/slack-github-action@v2.0.0
         with:
-          #webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
-          webhook: https://hooks.slack.com/services/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
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
           payload: |
             {
