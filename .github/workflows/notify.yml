@@ -1,4 +1,4 @@
-name: notify
+name: Notify
 
 on:
   workflow_call:
