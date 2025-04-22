@@ -2,6 +2,11 @@ name: Notify
 
 on:
   workflow_call:
+    inputs:
+      slack_webhook_url:
+        description: "Slack channel webhook"
+        type: string
+        default: ""
 
 jobs:
   notify:
