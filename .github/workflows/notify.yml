@@ -1,0 +1,24 @@
+name: Notify
+
+on:
+  workflow_call:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Notify Slack
+        uses: slackapi/slack-github-action@v2.0.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+                attachments: [
+                    {
+                        color: "${{ (github.event.workflow_run.conclusion == 'success') && 'good' || '' }}${{ (github.event.workflow_run.conclusion == 'failure') && 'danger' || '' }}",
+                        text: ":gear: *${{ github.event.repository.name }} website publication* :gear:\n\n\n*Job id:* `${{ github.event.workflow_run.id }}`\n*Job status:* `${{ github.event.action }}`\n*Conclusion:* `${{github.event.workflow_run.conclusion}}`\n\n<https://github.com/WeMoveEU/wemove-charity.eu/actions/runs/${{ github.event.workflow_run.id }}|Watch the job>",
+                    }
+                ]
+            }
