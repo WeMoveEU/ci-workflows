@@ -9,13 +9,15 @@ The workflow is triggered via `workflow_call`, which means it can be triggered b
 ## Inputs
 
 - **images**: A JSON string defining a list of image configurations. Each configuration specifies:
+
   - `dockerfile`: Path to the Dockerfile used for building the image.
   - `name`: Name of the image to be used in the registry.
   - `dir`: The root of app sources. Use if you have your app in a project subdirectory, eg. under `/frontend`.
   - `overlay`: Name of an artifact to unpack over the repository. Use an unique name based on `${{gitlab.run_id}}` to avoid races in using this artifact!
   - `prepare`: Commands passed to shell (`sh -c "${{prepare}}"`), after unpacking the overlay, before building image.
-  
-  Example: 
+
+  Example:
+
   ```json
   [
     {
@@ -27,6 +29,7 @@ The workflow is triggered via `workflow_call`, which means it can be triggered b
     }
   ]
   ```
+
   If you want to just build a single image with a `Dockerfile` in project root, leave it out.
 
 - **production_branch**: The name of the production branch. Default is `main`.
@@ -65,7 +68,7 @@ on:
   push:
     branches:
       - main
-      - 'release/*'
+      - "release/*"
 jobs:
   release:
     uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@main
@@ -73,4 +76,3 @@ jobs:
       production_branch: ${{vars.CI_PRODUCTION_BRANCH}}
       images: '[{"dockerfile": "server/Dockerfile", "dir": "server", "name": "crm/server"}]'
 ```
-

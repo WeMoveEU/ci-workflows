@@ -4,23 +4,23 @@ on:
   workflow_call:
     inputs:
       backend_image:
-        description: 'Map containing image config used in images input for docker-build workflow'
+        description: "Map containing image config used in images input for docker-build workflow"
         type: string
         default: '{"dockerfile": "backend/Dockerfile", "name": "${{github.repository}}/backend", "overlay": "backend_env_${{github.run_id}}", "dir": "backend"}'
       frontend_image:
-        description: 'Map containing image config used in images input for docker-build workflow'
+        description: "Map containing image config used in images input for docker-build workflow"
         type: string
         default: '{"dockerfile": "frontend/Dockerfile", "name": "${{github.repository}}/frontend", "overlay": "frontend_env_${{github.run_id}}", "dir": "frontend"}'
       production_branch:
-        description: 'Name of the production branch'
+        description: "Name of the production branch"
         type: string
-        default: 'main'
+        default: "main"
       deploy_marker:
-        description: 'Filename in strapi public folder that means backend is deployed'
+        description: "Filename in strapi public folder that means backend is deployed"
         type: string
     secrets:
       personal_token:
-        description: 'Optional personal token used to checkout private repositories (current and submodules)'
+        description: "Optional personal token used to checkout private repositories (current and submodules)"
 
 jobs:
   release-backend:
@@ -40,7 +40,6 @@ jobs:
         with:
           url: https://strapi.${{vars.DOMAIN}}/${{inputs.deploy_marker}}
         if: ${{inputs.deploy_marker}}
-    
 
   release-frontend:
     needs:
@@ -50,8 +49,3 @@ jobs:
       production_branch: ${{inputs.production_branch}}
       images: |
         [${{inputs.frontend_image}}]
-
-
-
-
-  

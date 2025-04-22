@@ -4,20 +4,20 @@ on:
   workflow_call:
     inputs:
       images:
-        description: 'List of image configurations containing dockerfile and name, and file overlay'
+        description: "List of image configurations containing dockerfile and name, and file overlay"
         type: string
         default: '[{"dockerfile": "Dockerfile", "name": "${{github.repository}}"}]'
       production_branch:
-        description: 'Name of the production branch'
+        description: "Name of the production branch"
         type: string
-        default: 'main'
+        default: "main"
     secrets:
       personal_token:
-        description: 'Optional personal token used to checkout private repositories (current and submodules)'
+        description: "Optional personal token used to checkout private repositories (current and submodules)"
 
 jobs:
   release:
-#    environment: ${{ (github.ref_name == inputs.production_branch) && 'production' || 'staging' }}
+    #    environment: ${{ (github.ref_name == inputs.production_branch) && 'production' || 'staging' }}
     permissions:
       contents: read
       packages: write
@@ -33,7 +33,7 @@ jobs:
           fetch-depth: 20
           submodules: recursive
           token: ${{ secrets.personal_token || github.token }}
-          
+
       - name: Apply overlay from an artifact
         if: ${{ matrix.image.overlay }}
         uses: actions/download-artifact@v4
@@ -46,11 +46,10 @@ jobs:
         with:
           name: ${{ matrix.image.overlay }}
 
-      - name: Run shell script to prepare the build 
+      - name: Run shell script to prepare the build
         if: ${{ matrix.image.prepare }}
         shell: bash
         run: ${{ matrix.image.prepare }}
-
 
       - name: Generate image tag based on branch etc
         id: meta
@@ -69,7 +68,7 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -86,4 +85,3 @@ jobs:
           file: ${{matrix.image.dockerfile || 'Dockerfile'}}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
