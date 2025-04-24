@@ -5,32 +5,22 @@ This GitHub Actions workflow automates the process of building and pushing Docke
 ## Overview
 
 The workflow is triggered via `workflow_call`, which means it can be triggered by other workflows within the repository. It takes parameters to customize the behavior, such as specifying image configurations, the production branch name, and optional secrets for authentication.
+Please use a version such as `@v2`
 
 ## Inputs
 
-- **images**: A JSON string defining a list of image configurations. Each configuration specifies:
+- **dockerfile**: Path to the Dockerfile used for building the image. Default `Dockerfile`
 
-  - `dockerfile`: Path to the Dockerfile used for building the image.
-  - `name`: Name of the image to be used in the registry.
-  - `dir`: The root of app sources. Use if you have your app in a project subdirectory, eg. under `/frontend`.
-  - `overlay`: Name of an artifact to unpack over the repository. Use an unique name based on `${{gitlab.run_id}}` to avoid races in using this artifact!
-  - `prepare`: Commands passed to shell (`sh -c "${{prepare}}"`), after unpacking the overlay, before building image.
+- **name**: Name of the image to be used in the registry.
 
-  Example:
+- **dir**: The root of app sources. Use if you have your app in a project subdirectory, eg. under `/frontend`. Default `.`
 
-  ```json
-  [
-    {
-      "dockerfile": "Dockerfile",
-      "name": "image-name",
-      "dir": "app/sources",
-      "overlay": "artifact_name",
-      "prepare": "date > app/sources/.timestamp; ./scripts/prepare.sh"
-    }
-  ]
-  ```
+- **overlay**: Name of an artifact to unpack over the repository. Use an unique name based on `${{gitlab.run_id}}` to avoid races in using this artifact!
 
-  If you want to just build a single image with a `Dockerfile` in project root, leave it out.
+- **prepare**: Commands passed to shell (`sh -c "${{prepare}}"`), after unpacking the overlay, before building image.
+
+- **args**: Docker args (one variable or multiline format), passed to build-args input of _docker-build-push_ action.
+
 
 - **production_branch**: The name of the production branch. Default is `main`.
 
@@ -71,8 +61,10 @@ on:
       - "release/*"
 jobs:
   release:
-    uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@main
+    uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@v2
     with:
       production_branch: ${{vars.CI_PRODUCTION_BRANCH}}
-      images: '[{"dockerfile": "server/Dockerfile", "dir": "server", "name": "crm/server"}]'
+      dockerfile: server/Dockerfile
+      dir: server
+      name: crm/server
 ```
