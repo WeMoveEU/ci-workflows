@@ -12,15 +12,15 @@ on:
         type: string
         default: ''
       production_branch:
-        description: 'Name of the production branch'
+        description: "Name of the production branch"
         type: string
-        default: 'main'
+        default: "main"
       deploy_marker:
-        description: 'Filename in strapi public folder that means backend is deployed'
+        description: "Filename in strapi public folder that means backend is deployed"
         type: string
     secrets:
       personal_token:
-        description: 'Optional personal token used to checkout private repositories (current and submodules)'
+        description: "Optional personal token used to checkout private repositories (current and submodules)"
 
 jobs:
   release-backend:
@@ -43,7 +43,6 @@ jobs:
         with:
           url: https://strapi.${{vars.DOMAIN}}/${{inputs.deploy_marker}}
         if: ${{inputs.deploy_marker}}
-    
 
   release-frontend:
     needs:
@@ -56,6 +55,3 @@ jobs:
       dir: frontend
       overlay: "frontend_env_${{github.run_id}}"
       args: ${{inputs.frontend_args}}
-
-
-  

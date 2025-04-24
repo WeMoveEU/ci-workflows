@@ -1,0 +1,42 @@
+# Schema: http://editorconfig.org
+# Docs: https://docs.microsoft.com/en-us/visualstudio/ide/editorconfig-code-style-settings-reference
+
+# Remove the line below if you want to inherit .editorconfig settings from higher directories
+root=true
+
+# Default options
+[*]
+charset=utf-8
+## Indentation and spacing
+indent_style=space
+indent_size=4
+trim_trailing_whitespace=true
+## New line preferences
+end_of_line=lf
+insert_final_newline=true
+
+# JavaScript/TypeScript files
+[*.{js,jsx,ts,tsx,yml}]
+## Indentation and spacing
+indent_size=2
+
+# Web pages files
+[*.{htm,html}]
+## Indentation and spacing
+indent_size=4
+
+# Web style files
+[*.{css,scss}]
+## Indentation and spacing
+indent_size=2
+
+# JSON files
+[*.json]
+## Indentation and spacing
+indent_size=2
+
+# Markdown files
+[*.{md,markdown}]
+## Indentation and spacing
+indent_size=2
+trim_trailing_whitespace=false
