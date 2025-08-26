@@ -37,7 +37,7 @@ jobs:
     needs:
       - release-backend
     runs-on: ubuntu-latest
-    environment: ${{ (github.ref_name == vars.CI_PRODUCTION_BRANCH) && 'production' || 'staging' }}
+    environment: ${{ ((github.ref_type == 'branch' && github.ref_name == vars.CI_PRODUCTION_BRANCH) || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v'))) && 'production' || 'staging' }}
     steps:
       - uses: Hardsix/action-wait-for-api@v2.0.2
         with:
