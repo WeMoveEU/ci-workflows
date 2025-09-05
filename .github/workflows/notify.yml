@@ -21,7 +21,7 @@ jobs:
                 attachments: [
                     {
                         color: "${{ (github.event.workflow_run.conclusion == 'success') && 'good' || '' }}${{ (github.event.workflow_run.conclusion == 'failure') && 'danger' || '' }}",
-                        text: ":gear: *${{ github.event.repository.name }} website publication* :gear:\n\n\n*Job id:* `${{ github.event.workflow_run.id }}`\n*Job status:* `${{ github.event.action }}`\n*Conclusion:* `${{github.event.workflow_run.conclusion}}`\n\n<https://github.com/WeMoveEU/wemove-charity.eu/actions/runs/${{ github.event.workflow_run.id }}|Watch the job>",
+                        text: ":gear: *${{ github.event.repository.name }} website publication* :gear:\n\n\n*Job id:* `${{ github.event.workflow_run.id }}`\n*Job status:* `${{ github.event.action }}`\n*Conclusion:* `${{github.event.workflow_run.conclusion}}`\n\n<https://github.com/WeMoveEU/${{ github.event.repository.name }}/actions/runs/${{ github.event.workflow_run.id }}|Watch the job>",
                     }
                 ]
             }
