@@ -15,7 +15,7 @@ uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@v9
 ```
 
 - Always pin to a version tag (`@v9`), not a branch.
-- Changes are released by pushing a new `vN` tag. `main` currently corresponds to v8; the latest tag is v9. Bump the major tag when changing workflow inputs/behavior so callers opt in deliberately.
+- Changes are released by pushing a new `vN` tag. The latest tag is v10, which points at the current `main`. Bump the major tag when changing workflow inputs/behavior so callers opt in deliberately.
 
 ## Workflows
 
