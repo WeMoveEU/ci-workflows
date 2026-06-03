@@ -12,7 +12,7 @@ jobs:
 
     steps:
       - name: Notify Slack
-        uses: slackapi/slack-github-action@v2.0.0
+        uses: slackapi/slack-github-action@v3
         with:
           webhook: ${{ secrets.slack_webhook_url }}
           webhook-type: incoming-webhook
