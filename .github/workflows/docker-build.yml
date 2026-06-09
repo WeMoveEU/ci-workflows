@@ -38,6 +38,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # geekyeggo/delete-artifact deletes the overlay via the Actions API,
+      # which requires actions: write (otherwise the delete returns 403).
+      actions: write
     runs-on: ubuntu-latest
 
     steps:
