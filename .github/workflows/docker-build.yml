@@ -82,10 +82,20 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref_name == inputs.production_branch }}
             type=raw,value=staging,enable=${{ github.ref_name == github.event.repository.default_branch && github.event.repository.default_branch != inputs.production_branch }}
 
+      # When no tag rule matches the current ref (e.g. a release/* or
+      # otherwise unrecognised branch) metadata-action emits an empty tag
+      # list. Pushing with no tag fails buildx ("tag is needed when pushing
+      # to registry"), so in that case we build to validate the Dockerfile
+      # but skip login and push instead of failing the run.
+      - name: Note when no tag matched (build only, no push)
+        if: ${{ steps.meta.outputs.tags == '' }}
+        run: echo "::warning::No image tag matched ref '${{ github.ref_name }}'. Building without pushing to the registry."
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
       - name: Login to GitHub Container Registry
+        if: ${{ steps.meta.outputs.tags != '' }}
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -97,7 +107,8 @@ jobs:
         with:
           # determine path from dockerfile location
           context: ${{inputs.dir}}
-          push: true
+          # Only push when at least one tag was produced; otherwise build-only.
+          push: ${{ steps.meta.outputs.tags != '' }}
           file: ${{inputs.dockerfile }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

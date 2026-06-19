@@ -11,11 +11,11 @@ This repository is a collection of **reusable GitHub Actions workflows** (`on: w
 Callers reference workflows by path and **version tag** from their own repos:
 
 ```yaml
-uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@v11
+uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@v12
 ```
 
-- Always pin to a version tag (`@v11`), not a branch.
-- Changes are released by pushing a new `vN` tag. The latest tag is v11, which points at the current `main`. Bump the major tag when changing workflow inputs/behavior so callers opt in deliberately.
+- Always pin to a version tag (`@v12`), not a branch.
+- Changes are released by pushing a new `vN` tag. The latest tag is v12, which points at the current `main`. Bump the major tag when changing workflow inputs/behavior so callers opt in deliberately.
 - On every release, update `README.md` with the new version tag and a short summary of the changes that tag includes, so the README and its version-pinned examples don't drift.
 
 ## Workflows
