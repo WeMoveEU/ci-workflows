@@ -1,0 +1,27 @@
+name: Dependabot auto-merge
+
+# Per-repo caller. Drop into .github/workflows/ of each consuming repo.
+# It runs on every PR but the reusable only acts on Dependabot PRs.
+#
+# The permissions block here MUST grant contents+pull-requests write: a called
+# workflow's effective GITHUB_TOKEN permissions are capped by the caller's.
+# GITHUB_TOKEN is passed to the reusable automatically (no `secrets: inherit`).
+#
+# Pin the reusable to a released tag of ci-workflows. v13 is the first tag that
+# contains it. Dependabot's github-actions ecosystem will open PRs bumping this
+# ref as new tags are cut — which the auto-merge this enables will then land.
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    uses: WeMoveEU/ci-workflows/.github/workflows/dependabot-auto-merge.yml@v13
+    # Override defaults if desired, e.g. patch-only for runtime-heavy repos:
+    # with:
+    #   allowed-update-types: "version-update:semver-patch"
