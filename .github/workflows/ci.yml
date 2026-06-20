@@ -1,0 +1,20 @@
+name: CI
+
+# PR gate for ci-workflows. The repo only holds reusable (workflow_call)
+# workflows, which can't meaningfully self-run on a PR, so the gate is
+# actionlint over the workflow files. The job is named `ci` so it produces a
+# status check named "ci" — the exact context the org ruleset requires.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint
+        uses: raven-actions/actionlint@v2
