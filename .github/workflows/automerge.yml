@@ -21,7 +21,7 @@ permissions:
 jobs:
   auto-merge:
     if: github.actor == 'dependabot[bot]'
-    uses: WeMoveEU/ci-workflows/.github/workflows/dependabot-auto-merge.yml@v13
+    uses: WeMoveEU/ci-workflows/.github/workflows/dependabot-auto-merge.yml@v14
     # Override defaults if desired, e.g. patch-only for runtime-heavy repos:
     # with:
     #   allowed-update-types: "version-update:semver-patch"
