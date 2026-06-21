@@ -1,0 +1,88 @@
+# Composite action: build the repo's Docker image, run the container, and verify
+# it actually serves an HTTP request sent with the PRODUCTION Host header.
+#
+# This catches two whole classes of bug that a plain "build" check cannot:
+#   1. Image build breaks (e.g. a base-image bump that drops a tool the
+#      Dockerfile relies on) — caught by `docker build`.
+#   2. Runtime serving breaks that only appear when the container actually runs
+#      under its real hostname (e.g. Vite's preview `allowedHosts` rejecting an
+#      unlisted Host with 403) — caught by curling with `Host: <host>`.
+#
+# Used as a STEP inside a job named `ci` so the required-status-check context
+# stays exactly `ci` (a reusable workflow would produce `ci / <job>` and break
+# the org ruleset's required-check match).
+name: Docker image smoke test
+description: Build the Docker image, run it, and assert it serves the production Host with the expected HTTP status.
+
+inputs:
+  host:
+    description: Host header to send — the production hostname the app is served under.
+    required: true
+  port:
+    description: Container port to publish and probe.
+    required: false
+    default: "8080"
+  path:
+    description: Request path to probe.
+    required: false
+    default: "/"
+  expected-status:
+    description: HTTP status code the probe must return.
+    required: false
+    default: "200"
+  dockerfile:
+    description: Path to the Dockerfile.
+    required: false
+    default: "Dockerfile"
+  context:
+    description: Docker build context.
+    required: false
+    default: "."
+  startup-timeout:
+    description: Seconds to wait for the container to start responding.
+    required: false
+    default: "90"
+
+runs:
+  using: composite
+  steps:
+    - name: Build image
+      shell: bash
+      run: docker build -f "${{ inputs.dockerfile }}" -t ci-smoke:latest "${{ inputs.context }}"
+
+    - name: Run container
+      shell: bash
+      run: docker run -d --name ci-smoke -p "${{ inputs.port }}:${{ inputs.port }}" ci-smoke:latest
+
+    - name: Probe with production Host header
+      shell: bash
+      env:
+        SMOKE_HOST: ${{ inputs.host }}
+        SMOKE_PORT: ${{ inputs.port }}
+        SMOKE_PATH: ${{ inputs.path }}
+        SMOKE_EXPECTED: ${{ inputs.expected-status }}
+        SMOKE_TIMEOUT: ${{ inputs.startup-timeout }}
+      run: |
+        set -euo pipefail
+        deadline=$((SECONDS + SMOKE_TIMEOUT))
+        code=000
+        while [ "$SECONDS" -lt "$deadline" ]; do
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Host: ${SMOKE_HOST}" \
+            "http://localhost:${SMOKE_PORT}${SMOKE_PATH}" || echo 000)
+          if [ "$code" = "$SMOKE_EXPECTED" ]; then
+            echo "✓ Got expected HTTP ${SMOKE_EXPECTED} for Host: ${SMOKE_HOST}"
+            exit 0
+          fi
+          echo "waiting for container… (got ${code}, want ${SMOKE_EXPECTED})"
+          sleep 3
+        done
+        echo "::error::Smoke test failed: got HTTP ${code} for Host: ${SMOKE_HOST}${SMOKE_PATH} (expected ${SMOKE_EXPECTED})"
+        echo "=== container logs ==="
+        docker logs ci-smoke || true
+        exit 1
+
+    - name: Tear down container
+      if: always()
+      shell: bash
+      run: docker rm -f ci-smoke >/dev/null 2>&1 || true
