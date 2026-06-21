@@ -42,6 +42,14 @@ inputs:
     description: Seconds to wait for the container to start responding.
     required: false
     default: "90"
+  build-only:
+    description: >-
+      When "true", only build the image and skip running/probing it. Use for
+      apps that can't boot standalone in CI (need runtime secrets, a database,
+      etc.). Catches image-build breaks (e.g. a base-image bump dropping a tool
+      the Dockerfile needs) without requiring the container to serve.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -51,10 +59,12 @@ runs:
       run: docker build -f "${{ inputs.dockerfile }}" -t ci-smoke:latest "${{ inputs.context }}"
 
     - name: Run container
+      if: ${{ inputs.build-only != 'true' }}
       shell: bash
       run: docker run -d --name ci-smoke -p "${{ inputs.port }}:${{ inputs.port }}" ci-smoke:latest
 
     - name: Probe with production Host header
+      if: ${{ inputs.build-only != 'true' }}
       shell: bash
       env:
         SMOKE_HOST: ${{ inputs.host }}
@@ -83,6 +93,6 @@ runs:
         exit 1
 
     - name: Tear down container
-      if: always()
+      if: ${{ always() && inputs.build-only != 'true' }}
       shell: bash
       run: docker rm -f ci-smoke >/dev/null 2>&1 || true
