@@ -11,11 +11,11 @@ This repository is a collection of **reusable GitHub Actions workflows** (`on: w
 Callers reference workflows by path and **version tag** from their own repos:
 
 ```yaml
-uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@v12
+uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@v14
 ```
 
-- Always pin to a version tag (`@v12`), not a branch.
-- Changes are released by pushing a new `vN` tag. The latest tag is v12, which points at the current `main`. Bump the major tag when changing workflow inputs/behavior so callers opt in deliberately.
+- Always pin to the floating major tag (`@v14`), not a branch.
+- Releases follow semver with a floating major (see `RELEASING.md`): cut an immutable `vMAJOR.MINOR.PATCH` tag and move the floating `vMAJOR` tag to it. Bump the major only for breaking changes to workflow inputs/behavior, so callers on `@vMAJOR` get minor/patch fixes automatically and opt into majors deliberately. The current major is v14.
 - On every release, update `README.md` with the new version tag and a short summary of the changes that tag includes, so the README and its version-pinned examples don't drift.
 
 ## Workflows
@@ -24,6 +24,7 @@ uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@v12
 - **deploy-strapi.yml** — Orchestrates a Strapi deploy by calling `docker-build.yml` twice: backend first (`backend/Dockerfile`, image `<repo>/backend`), then frontend (`frontend/Dockerfile`, image `<repo>/frontend`). Between them, `wait-for-backend` polls the live backend until ready.
 - **notify.yml** — Posts a Slack notification (green on success, red on failure) via `slackapi/slack-github-action`. Requires the `slack_webhook_url` secret. Call it as a final step from a caller workflow.
 - **python-build.yml** — Builds a Python package with `uv` (`astral-sh/setup-uv` + `uv build`).
+- **docker-smoke** (`.github/actions/docker-smoke`) — Composite action (not a reusable workflow). Builds the Docker image, runs it, and probes it with the production `Host` header to catch build breaks and hostname-dependent serving failures. Used as a step inside a job named `ci` (so the required-status-check context stays exactly `ci`). Supports `build-only` for apps that can't boot standalone in CI.
 
 ## Architecture Notes (the non-obvious parts)
 
