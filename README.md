@@ -25,6 +25,7 @@ The workflows and actions available:
 - [`deploy-strapi.yml`](#deploy-strapiyml) — build and deploy a Strapi backend + frontend.
 - [`notify.yml`](#notifyyml) — post a Slack notification.
 - [`python-build.yml`](#python-buildyml) — build a Python package with `uv`.
+- [`dependabot-auto-merge.yml`](#dependabot-auto-mergeyml) — auto-merge low-risk Dependabot PRs once required checks pass.
 - [`docker-smoke`](#docker-smoke) — composite action: build the image, run it, and probe it with the production Host header.
 
 ---
@@ -155,6 +156,66 @@ installs uv (`astral-sh/setup-uv`), and runs `uv build`. Takes no inputs.
 
 ---
 
+## dependabot-auto-merge.yml
+
+Enables auto-merge on Dependabot PRs for low-risk update types. Call it from a caller
+workflow triggered `on: pull_request`; the reusable only acts on PRs authored by
+`dependabot[bot]`.
+
+Auto-merge only *completes* once the target branch's required status checks pass, so this
+depends on a branch ruleset (require a PR + required checks) on the consuming repo.
+Without that ruleset `gh pr merge --auto` has nothing to wait for and the PR merges
+immediately.
+
+### Inputs
+
+- **merge-method**: `merge` | `squash` | `rebase`. Default `squash`.
+
+- **allowed-update-types**: Comma-separated Dependabot update-types to auto-merge, matched
+  as whole tokens (no spaces around the commas). Default
+  `version-update:semver-patch,version-update:semver-minor`. Anything outside the list —
+  majors included — is left for manual review.
+
+### Secrets
+
+- **app-id** / **app-private-key**: Optional GitHub App credentials used to arm the merge.
+  **Pass these whenever merging is meant to trigger something downstream.** A merge armed
+  with `GITHUB_TOKEN` has its push event suppressed by GitHub's recursion guard, so a
+  deploy that runs `on: push` to the default branch never runs — the PR goes green and
+  nothing ships. Omit them and the workflow falls back to `GITHUB_TOKEN` and warns in the
+  run log.
+
+  The App needs three repository permissions: **Contents** (read/write), **Pull requests**
+  (read/write) and **Workflows** (read/write). Workflows is easy to miss and not optional:
+  Dependabot's `github-actions` PRs edit files under `.github/workflows/`, and a token
+  without it is refused when merging them.
+
+### Sample usage
+
+```yaml
+name: Dependabot auto-merge
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    uses: WeMoveEU/ci-workflows/.github/workflows/dependabot-auto-merge.yml@v14
+    secrets:
+      app-id: ${{ secrets.DEPENDABOT_POLICY_APP_ID }}
+      app-private-key: ${{ secrets.DEPENDABOT_POLICY_APP_KEY }}
+```
+
+The caller's `permissions:` block must grant `contents: write` and `pull-requests: write` —
+a called workflow's effective `GITHUB_TOKEN` permissions are capped by the caller's.
+
+---
+
 ## docker-smoke
 
 Composite action (`.github/actions/docker-smoke`) that builds the repo's Docker image,
@@ -200,6 +261,7 @@ jobs:
 Version tags `v1`–`v13` predate the current scheme and are frozen point releases. The
 floating-major convention (see [`RELEASING.md`](RELEASING.md)) starts at **`v14`**.
 
+- **v14.1** — `dependabot-auto-merge.yml`: accepts optional `app-id` / `app-private-key` secrets so the merge is armed with a GitHub App token and fires a real push event (a `GITHUB_TOKEN`-armed merge does not, leaving push-triggered deploys silently unrun). Falls back to `GITHUB_TOKEN` when the secrets are omitted, and warns. The update-type gate is now a whole-token, fail-closed match — previously an empty `update-type` from `fetch-metadata` satisfied `contains()` and could auto-merge a major.
 - **v14** — First release under the semver + floating-major scheme. Ships the `docker-smoke` composite action (build + run + production-Host-header probe, with a `build-only` mode).
 - **v13** — Adds a reusable Dependabot auto-merge workflow and an actionlint CI gate.
 - **v12** — `docker-build.yml`: when no tag rule matches the ref, the image is now built without pushing (with a warning) instead of failing with `tag is needed when pushing to registry`. Registry login is skipped in that case.
