@@ -8,8 +8,16 @@ name: Dependabot auto-merge
 # GITHUB_TOKEN is passed to the reusable automatically (no `secrets: inherit`).
 #
 # Pin the reusable to a released tag of ci-workflows. v13 is the first tag that
-# contains it. Dependabot's github-actions ecosystem will open PRs bumping this
-# ref as new tags are cut — which the auto-merge this enables will then land.
+# contains it; v14.1 is the first that accepts the App secrets below.
+# Dependabot's github-actions ecosystem will open PRs bumping this ref as new
+# tags are cut — which the auto-merge this enables will then land.
+#
+# The `secrets:` block is what makes the merge fire a push event. Without it
+# the merge is armed with GITHUB_TOKEN and GitHub suppresses the push, so a
+# deploy that runs `on: push` to the default branch never runs — the PR goes
+# green and nothing ships. Drop the block only for repos where merging is not
+# meant to trigger anything (the reusable warns in the run log when it is
+# missing).
 
 on:
   pull_request:
@@ -22,6 +30,9 @@ jobs:
   auto-merge:
     if: github.actor == 'dependabot[bot]'
     uses: WeMoveEU/ci-workflows/.github/workflows/dependabot-auto-merge.yml@v14
+    secrets:
+      app-id: ${{ secrets.DEPENDABOT_POLICY_APP_ID }}
+      app-private-key: ${{ secrets.DEPENDABOT_POLICY_APP_KEY }}
     # Override defaults if desired, e.g. patch-only for runtime-heavy repos:
     # with:
     #   allowed-update-types: "version-update:semver-patch"

@@ -9,6 +9,30 @@ name: Dependabot auto-merge
 # the consuming repo. Without that ruleset, `gh pr merge --auto` has nothing to
 # wait for. Major bumps and anything outside allowed-update-types are left for
 # manual review.
+#
+# ---------------------------------------------------------------------------
+# Arming credential — pass the App secrets whenever the merge must trigger
+# something downstream.
+#
+# A merge armed with GITHUB_TOKEN lands with its push event SUPPRESSED (this is
+# GitHub's recursion guard: events raised by GITHUB_TOKEN do not start new
+# workflow runs). For a repo whose deploy runs `on: push` to the default
+# branch, that means the merge is green but no image is ever built. Measured
+# across this org on 2026-08-20: nine repos had accumulated undeployed commits
+# on `main` this way — youmove 41, wemove-charity.eu 40, bankimporter 32,
+# mep-data-manager 28, toolbox 22 — while every merged Dependabot PR showed
+# `mergedBy: app/github-actions`.
+#
+# Passing `app-id` + `app-private-key` mints an installation token instead, and
+# merges armed with it emit real push events. Omit them and the workflow falls
+# back to GITHUB_TOKEN, so existing callers keep working unchanged — but any
+# caller that deploys on push wants the App.
+#
+# The App needs three repository permissions: Contents (read/write),
+# Pull requests (read/write), and Workflows (read/write). Workflows is easy to
+# miss and not optional: Dependabot's `github-actions` PRs edit files under
+# .github/workflows/, and a token without it is refused when merging them.
+# ---------------------------------------------------------------------------
 
 on:
   workflow_call:
@@ -18,9 +42,21 @@ on:
         type: string
         default: "squash"
       allowed-update-types:
-        description: "Comma-separated Dependabot update-types to auto-merge"
+        description: >-
+          Comma-separated Dependabot update-types to auto-merge. Exact tokens,
+          no spaces around the commas — matching is whole-token, not substring.
         type: string
         default: "version-update:semver-patch,version-update:semver-minor"
+    secrets:
+      app-id:
+        description: >-
+          App ID of a GitHub App installed on the calling repo. Optional;
+          without it the merge is armed with GITHUB_TOKEN and fires no push
+          event. Required together with app-private-key.
+        required: false
+      app-private-key:
+        description: "Private key (PEM) for the App named by app-id."
+        required: false
 
 permissions:
   contents: write
@@ -37,9 +73,50 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # The `secrets` context is not usable in a step-level `if:`, so resolve
+      # "did the caller pass an App?" into an output first.
+      - name: Detect App credentials
+        id: cfg
+        env:
+          APP_ID: ${{ secrets.app-id }}
+        run: |
+          if [ -n "$APP_ID" ]; then
+            echo "has-app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-app=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No App credentials passed — arming with GITHUB_TOKEN, whose merge fires no push event. A deploy that runs on push to the default branch will NOT run for this merge."
+          fi
+
+      # The update-type gate, used by this step and the merge below. Whole-token
+      # match, fail-closed on an empty update-type: the bare
+      # `contains(allowed, update-type)` this replaced returned TRUE whenever
+      # fetch-metadata produced no update-type (every string contains the empty
+      # string), which would have auto-merged a major. Same fail-closed stance
+      # as donation-form / donations-api — and it matters, because dependabot.yml
+      # `ignore` rules cover version updates only, so a *security* major does
+      # reach this workflow and this gate is the only thing refusing it.
+      #
+      # Token is minted only when the PR would actually merge, so a skipped PR
+      # costs nothing.
+      - name: Mint App token
+        id: app-token
+        if: >-
+          steps.cfg.outputs.has-app == 'true' &&
+          steps.meta.outputs.update-type != '' &&
+          contains(format(',{0},', inputs.allowed-update-types),
+                   format(',{0},', steps.meta.outputs.update-type))
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.app-id }}
+          private-key: ${{ secrets.app-private-key }}
+
       - name: Enable auto-merge for allowed update types
-        if: contains(inputs.allowed-update-types, steps.meta.outputs.update-type)
+        if: >-
+          steps.meta.outputs.update-type != '' &&
+          contains(format(',{0},', inputs.allowed-update-types),
+                   format(',{0},', steps.meta.outputs.update-type))
         run: gh pr merge --auto --${{ inputs.merge-method }} "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Falls back to GITHUB_TOKEN when the App token step was skipped.
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
