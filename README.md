@@ -167,6 +167,13 @@ depends on a branch ruleset (require a PR + required checks) on the consuming re
 Without that ruleset `gh pr merge --auto` has nothing to wait for and the PR merges
 immediately.
 
+Arming is retried five times, and falls back to a direct merge. That covers two real
+failure modes: `gh pr merge --auto` intermittently returns a transient GraphQL error, and
+auto-merge cannot be enabled at all on a PR whose required checks have *already* gone
+green — which fast CI makes common, and which otherwise leaves the PR sitting green and
+unmerged. The direct merge is not a bypass: branch protection still refuses it while
+required checks are pending or failing.
+
 ### Inputs
 
 - **merge-method**: `merge` | `squash` | `rebase`. Default `squash`.
@@ -261,6 +268,7 @@ jobs:
 Version tags `v1`–`v13` predate the current scheme and are frozen point releases. The
 floating-major convention (see [`RELEASING.md`](RELEASING.md)) starts at **`v14`**.
 
+- **v14.2** — `dependabot-auto-merge.yml`: arming is now retried (5 attempts) with a direct-merge fallback, so a transient GraphQL error no longer strands a PR and an already-green PR still merges. Consolidates logic that existed only in the inline copies in wemove.eu, youmove, wemove-charity.eu and pubstatic, which this lets them drop.
 - **v14.1** — `dependabot-auto-merge.yml`: accepts optional `app-id` / `app-private-key` secrets so the merge is armed with a GitHub App token and fires a real push event (a `GITHUB_TOKEN`-armed merge does not, leaving push-triggered deploys silently unrun). Falls back to `GITHUB_TOKEN` when the secrets are omitted, and warns. The update-type gate is now a whole-token, fail-closed match — previously an empty `update-type` from `fetch-metadata` satisfied `contains()` and could auto-merge a major.
 - **v14** — First release under the semver + floating-major scheme. Ships the `docker-smoke` composite action (build + run + production-Host-header probe, with a `build-only` mode).
 - **v13** — Adds a reusable Dependabot auto-merge workflow and an actionlint CI gate.
