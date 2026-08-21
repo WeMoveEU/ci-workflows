@@ -185,10 +185,10 @@ immediately.
   nothing ships. Omit them and the workflow falls back to `GITHUB_TOKEN` and warns in the
   run log.
 
-  The App needs three repository permissions: **Contents** (read/write), **Pull requests**
-  (read/write) and **Workflows** (read/write). Workflows is easy to miss and not optional:
-  Dependabot's `github-actions` PRs edit files under `.github/workflows/`, and a token
-  without it is refused when merging them.
+  The App needs two repository permissions: **Contents** (read/write) and **Pull requests**
+  (read/write); Metadata (read) is mandatory and comes along. It does **not** need
+  Workflows (write) — that permission governs *pushing* workflow files through the Contents
+  API, not *merging* a PR that changes them.
 
 ### Sample usage
 
