@@ -105,7 +105,7 @@ jobs:
           steps.meta.outputs.update-type != '' &&
           contains(format(',{0},', inputs.allowed-update-types),
                    format(',{0},', steps.meta.outputs.update-type))
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.app-id }}
           private-key: ${{ secrets.app-private-key }}
