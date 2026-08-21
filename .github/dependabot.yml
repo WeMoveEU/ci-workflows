@@ -1,10 +1,33 @@
 version: 2
+
+# Tier 1 — production ships when the floating vMAJOR tag is moved by hand
+# (RELEASING.md), not when a PR merges. Consumers pin @v14 and never read
+# `main`, so `main` is this repo's staging: a merge here reaches nobody.
+# That is why auto-merging patch + minor onto it is safe.
+#
+# The release gate is therefore a human moving the tag. Worth knowing when you
+# do: the `ci` check is actionlint only — it lints the YAML, it does not test
+# that the reusables still work, and a bad docker-build.yml reaches every
+# consumer the moment the tag moves.
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "daily"
+      time: "05:00"
+      timezone: "Etc/UTC"
     open-pull-requests-limit: 10
+    # A version must be 7 days old before a PR opens — supply-chain gate; most
+    # compromised packages are yanked within 24-72h. Version updates only:
+    # security updates deliberately ignore it.
+    cooldown:
+      default-days: 7
     groups:
       github-actions-minor-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # No major PRs at all. `ignore` covers version updates only, so a
+      # security major can still open one — the auto-merge workflow's
+      # update-type gate is what refuses to merge it.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
