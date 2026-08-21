@@ -121,8 +121,34 @@ jobs:
           steps.meta.outputs.update-type != '' &&
           contains(format(',{0},', inputs.allowed-update-types),
                    format(',{0},', steps.meta.outputs.update-type))
-        run: gh pr merge --auto --${{ inputs.merge-method }} "$PR_URL"
+        # Two failure modes this handles, both seen in production on the
+        # wemove.eu / youmove / wemove-charity.eu inline copies this replaces:
+        #
+        #   1. `gh pr merge --auto` intermittently returns a transient GraphQL
+        #      error, which strands the PR until a human notices.
+        #   2. Auto-merge cannot be enabled on a PR whose required checks have
+        #      ALREADY passed. With fast CI the checks often win the race, and
+        #      the PR then sits green and unmerged forever.
+        #
+        # So: retry, and fall back to a direct merge. The direct merge is not a
+        # bypass — branch protection still refuses it while required checks are
+        # pending or failing. On a repo with NO required checks it would merge
+        # immediately, which is exactly why a ruleset is part of the entry bar
+        # for using this workflow at all (see the note at the top).
+        #
+        # merge-method goes through env, not `${{ }}` interpolation into the
+        # script body, so a caller cannot inject shell through it.
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if gh pr merge --auto --"$MERGE_METHOD" "$PR_URL"; then exit 0; fi
+            if gh pr merge --"$MERGE_METHOD" "$PR_URL"; then exit 0; fi
+            echo "attempt $attempt: could not enable auto-merge yet; retrying in 15s..."
+            sleep 15
+          done
+          echo "::error::failed to enable auto-merge after 5 attempts"
+          exit 1
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
+          MERGE_METHOD: ${{ inputs.merge-method }}
           # Falls back to GITHUB_TOKEN when the App token step was skipped.
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
