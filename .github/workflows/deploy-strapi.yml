@@ -39,10 +39,37 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ ((github.ref_type == 'branch' && github.ref_name == vars.CI_PRODUCTION_BRANCH) || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v'))) && 'production' || 'staging' }}
     steps:
-      - uses: Hardsix/action-wait-for-api@v2.0.2
-        with:
-          url: https://strapi.${{vars.DOMAIN}}/${{inputs.deploy_marker}}
+      # Replaces Hardsix/action-wait-for-api@v2.0.2. That action is Node 20 and there
+      # is nothing to bump to — v2.0.2 IS upstream's latest release — so it would have
+      # been the one thing left blocking this repo when Node 20 leaves the runners in
+      # fall 2026. The old call site passed only `url`, so this reproduces the action's
+      # defaults exactly: GET, succeed on 200, poll every 10s, give up after 300s.
+      #
+      # The URL goes through `env` rather than being interpolated into the script body:
+      # deploy_marker is a workflow_call input supplied by the calling repo, and splicing
+      # caller-controlled text straight into a shell script is how you get injection.
+      - name: Wait for the backend deploy marker
         if: ${{inputs.deploy_marker}}
+        env:
+          MARKER_URL: https://strapi.${{vars.DOMAIN}}/${{inputs.deploy_marker}}
+        run: |
+          set -uo pipefail
+          timeout=300
+          interval=10
+          deadline=$((SECONDS + timeout))
+          while :; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$interval" "$MARKER_URL" 2>/dev/null || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "$MARKER_URL returned 200 after ${SECONDS}s"
+              exit 0
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::timed out after ${timeout}s waiting for $MARKER_URL (last status $code)"
+              exit 1
+            fi
+            echo "waiting for $MARKER_URL (status $code, ${SECONDS}s elapsed)"
+            sleep "$interval"
+          done
 
   release-frontend:
     needs:
