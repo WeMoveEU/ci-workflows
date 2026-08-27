@@ -1,0 +1,20 @@
+name: Python pin drift
+description: >-
+  Fail when a repo names its Python version in more than one place with more than
+  one value, or states requires-python as a floor instead of ==X.Y.*.
+
+inputs:
+  path:
+    description: Repo root to check, relative to the workspace.
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    # github.action_path resolves inside this action's own checkout, so the script
+    # travels with the action -- no second actions/checkout of ci-workflows, which
+    # is why this is an action and not a reusable workflow.
+    - name: Check Python pins
+      shell: bash
+      run: python3 "${{ github.action_path }}/check_python_pins.py" --root "${{ inputs.path }}"

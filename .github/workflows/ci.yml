@@ -1,9 +1,12 @@
 name: CI
 
 # PR gate for ci-workflows. The repo only holds reusable (workflow_call)
-# workflows, which can't meaningfully self-run on a PR, so the gate is
-# actionlint over the workflow files. The job is named `ci` so it produces a
-# status check named "ci" — the exact context the org ruleset requires.
+# workflows and composite actions, which can't meaningfully self-run on a PR, so
+# the gate is actionlint over the workflow files plus the unit tests of any
+# action that ships real logic — today that is python-pins. Those tests are the
+# only thing standing between a broken parser and every consumer on @v14. The
+# job is named `ci` so it produces a status check named "ci" — the exact context
+# the org ruleset requires.
 
 on:
   pull_request:
@@ -18,3 +21,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: actionlint
         uses: raven-actions/actionlint@v2
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+      - name: python-pins unit tests
+        working-directory: .github/actions/python-pins
+        run: uv run --no-project --with pytest pytest test_check_python_pins.py -v
