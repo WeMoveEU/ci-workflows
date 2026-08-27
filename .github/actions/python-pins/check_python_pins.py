@@ -121,3 +121,101 @@ def collect(root: Path) -> list[Site]:
         elif rel.startswith(".github/workflows/") and name.endswith((".yml", ".yaml")):
             sites += _workflow_sites(rel, text)
     return sites
+
+
+REQUIRES_OK_RE = re.compile(r"^==(\d+\.\d+)\.\*$")
+
+
+def repo_role(root: Path) -> str:
+    """`library` opts out of the ==X.Y.* form rule. See docs/python-pins.md."""
+    path = root / "pyproject.toml"
+    if not path.exists():
+        return "application"
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (tomllib.TOMLDecodeError, OSError):
+        return "application"
+    return str(data.get("tool", {}).get("python-pins", {}).get("role", "application"))
+
+
+def evaluate(sites: list[Site], has_pyproject: bool, role: str = "application") -> list[str]:
+    """Human-readable problems. Empty list means the repo is consistent."""
+    problems: list[str] = []
+    if not sites and not has_pyproject:
+        return problems
+
+    for s in sites:
+        if s.minor is None:
+            problems.append(f"{s.path}: {s.kind} value {s.raw!r} names no usable X.Y version")
+
+    if has_pyproject and not any(s.kind == "requires-python" for s in sites):
+        problems.append(
+            "pyproject.toml: no requires-python. Every manifest states its Python as "
+            "==X.Y.* -- a missing floor is a pin nobody can check."
+        )
+
+    # A library declares what it supports; its consumers each ship their own runtime,
+    # so the form rule does not apply to it. Values still have to agree -- the
+    # disagreement check below runs for every role.
+    if role != "library":
+        for s in sites:
+            if s.kind == "requires-python" and not REQUIRES_OK_RE.match(s.raw.replace(" ", "")):
+                want = f"=={s.minor}.*" if s.minor else "==X.Y.*"
+                problems.append(
+                    f"{s.path}: requires-python = {s.raw!r} is a floor, not a pin. "
+                    f"Write {want} -- a floor is satisfied by every later Python, which is "
+                    f"how seven repos drifted a whole minor without going red."
+                )
+
+    by_value: dict[str, list[str]] = {}
+    for s in sites:
+        if s.minor:
+            by_value.setdefault(s.minor, []).append(f"{s.path} ({s.kind})")
+    if len(by_value) > 1:
+        detail = "; ".join(f"{v} in {', '.join(paths)}" for v, paths in sorted(by_value.items()))
+        problems.append(f"Python version disagrees: {detail}")
+
+    dev_pins = {s.kind for s in sites} & {".python-version", ".tool-versions"}
+    if len(dev_pins) > 1:
+        problems.append(
+            ".python-version and .tool-versions both pin Python. Keep one -- "
+            "delete .tool-versions unless asdf/mise is genuinely in use here."
+        )
+    return problems
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--root", default=".", help="repo root to check")
+    ap.add_argument("--json", action="store_true", help="emit findings as JSON")
+    args = ap.parse_args(argv)
+
+    root = Path(args.root).resolve()
+    sites = collect(root)
+    role = repo_role(root)
+    problems = evaluate(sites, has_pyproject=(root / "pyproject.toml").exists(), role=role)
+
+    if args.json:
+        print(json.dumps({"sites": [s._asdict() for s in sites], "problems": problems}, indent=2))
+        return 1 if problems else 0
+
+    if not sites:
+        print("python-pins: no Python version named anywhere -- nothing to check.")
+        return 0
+
+    width = max(len(s.path) for s in sites)
+    print(f"python-pins: every site that names a Python version (role: {role})\n")
+    for s in sites:
+        print(f"  {s.path:<{width}}  {s.kind:<16}  {s.raw:<22}  -> {s.minor or '?'}")
+    if not problems:
+        print(f"\nOK: all {len(sites)} sites agree.")
+        return 0
+    print("\nFAIL:")
+    for p in problems:
+        print(f"  * {p}")
+    print("\n  Rule: docs/python-pins.md in WeMoveEU/dependency-policy.")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
