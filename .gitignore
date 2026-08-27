@@ -1,2 +1,8 @@
 .vscode
 !.github
+
+# This repo now ships a Python action (.github/actions/python-pins). Running its
+# tests locally leaves bytecode next to the source; it must never be committed.
+__pycache__/
+*.pyc
+.pytest_cache/
