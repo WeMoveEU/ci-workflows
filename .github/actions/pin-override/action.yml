@@ -1,0 +1,51 @@
+name: Dependabot pin override
+description: >-
+  Write Yarn `resolutions` for the transitive advisories Dependabot cannot fix, when a
+  parent pins the vulnerable package to an exact version. Stays inside the compatibility
+  line, verifies every entry by re-running the audit, and names whatever it refuses.
+
+inputs:
+  path:
+    description: >-
+      Workspace directory holding package.json and yarn.lock, relative to the
+      workspace root (e.g. "backend").
+    required: false
+    default: "."
+  dry-run:
+    description: Report the plan and write nothing.
+    required: false
+    default: "false"
+
+outputs:
+  changed:
+    description: '"true" when package.json and yarn.lock were modified.'
+    value: ${{ steps.override.outputs.changed }}
+  summary:
+    description: One-line summary of what was applied, reverted and skipped.
+    value: ${{ steps.override.outputs.summary }}
+  applied:
+    description: Markdown list of the resolutions written.
+    value: ${{ steps.override.outputs.applied }}
+  blocked:
+    description: Markdown list of the advisories left for a human, with the reason.
+    value: ${{ steps.override.outputs.blocked }}
+  blocked_count:
+    description: How many distinct advisories were left for a human.
+    value: ${{ steps.override.outputs.blocked_count }}
+
+runs:
+  using: composite
+  steps:
+    # github.action_path resolves inside this action's own checkout, so the script travels
+    # with the action and the caller needs no second actions/checkout of ci-workflows.
+    # Same reason python-pins is an action rather than a reusable workflow.
+    #
+    # The caller is responsible for node + corepack being on PATH: this runs the repo's own
+    # pinned Yarn, because the lockfile it rewrites embeds a hash of the Yarn version.
+    - name: Write pin overrides
+      id: override
+      shell: bash
+      run: |
+        python3 "${{ github.action_path }}/pin_override.py" \
+          --root "${{ inputs.path }}" \
+          ${{ inputs.dry-run == 'true' && '--dry-run' || '' }}
