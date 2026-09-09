@@ -26,3 +26,6 @@ jobs:
       - name: python-pins unit tests
         working-directory: .github/actions/python-pins
         run: uv run --no-project --with pytest pytest test_check_python_pins.py -v
+      - name: pin-override unit tests
+        working-directory: .github/actions/pin-override
+        run: uv run --no-project --with pytest pytest test_pin_override.py -v
