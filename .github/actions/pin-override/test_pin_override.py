@@ -347,3 +347,136 @@ def test_summary_reads_as_a_sentence():
     assert "cheerio/undici -> ^7.29.1 (high, 2 advisories)" in got
     assert "1 need a human" in got
     assert p.summarise([], [], []) == "nothing to change"
+
+
+# ------------------------------------------------------------------ the bump pass
+
+LOCK_AFTER = LOCK.replace("version: 1.1.16", "version: 1.1.18").replace(
+    "version: 5.0.7", "version: 5.0.9").replace("version: 6.15.3", "version: 6.16.0")
+
+
+class _Yarn:
+    """Fake `run`: a `yarn up` rewrites the lockfile to LOCK_AFTER (or to `lock_after`
+    if given) and records every command; anything else exits 0 with no output."""
+
+    def __init__(self, root, rc=0, rewrite_manifest=False, lock_after=LOCK_AFTER):
+        self.root, self.rc, self.rewrite_manifest = root, rc, rewrite_manifest
+        self.lock_after, self.calls = lock_after, []
+
+    def __call__(self, cmd, cwd, check=False):
+        self.calls.append(cmd)
+
+        class Proc:
+            returncode = self.rc
+            stdout = ""
+            stderr = "boom" if self.rc else ""
+        if cmd[:2] == ["yarn", "up"] and self.rc == 0:
+            (self.root / "yarn.lock").write_text(self.lock_after)
+            if self.rewrite_manifest:
+                (self.root / "package.json").write_text('{"name": "changed"}')
+        return Proc()
+
+
+def _audits(monkeypatch, *results):
+    """`audit` returns each result in turn, then the last one forever."""
+    queue = list(results)
+
+    def fake(root):
+        return queue.pop(0) if len(queue) > 1 else queue[0]
+    monkeypatch.setattr(p, "audit", fake)
+
+
+def test_bump_keeps_what_cleared_and_touches_only_the_lockfile(tmp_path, monkeypatch):
+    root = _pkg(tmp_path, dependencies={"qs": "^6.11.0"})
+    manifest = (root / "package.json").read_text()
+    yarn = _Yarn(root)
+    monkeypatch.setattr(p, "run", yarn)
+    before = [_adv("brace-expansion", "GHSA-A", "<1.1.17", ["1.1.16"], ["minimatch@npm:3.1.5"]),
+              _adv("brace-expansion", "GHSA-B", ">=4.0.0 <5.0.8", ["5.0.7"], ["x@npm:1"]),
+              _adv("qs", "GHSA-C", "<6.16.0", ["6.15.3"], ["y@npm:1"], severity="low")]
+    _audits(monkeypatch, [])                      # everything cleared
+    bumped, left, note = p.bump_in_range(root, before)
+    assert note == "" and left == []
+    assert [b["pkg"] for b in bumped] == ["brace-expansion", "qs"]
+    be = bumped[0]
+    assert be["from"] == ["1.1.16", "5.0.7"] and be["to"] == ["1.1.18", "5.0.9"], be
+    assert be["ghsas"] == {"GHSA-A", "GHSA-B"} and be["severity"] == "high"
+    # A DIRECT dependency is bumped too: -R keeps the manifest range and moves the lock.
+    assert bumped[1]["pkg"] == "qs"
+    assert (root / "package.json").read_text() == manifest
+    assert len(yarn.calls) == 1
+    assert yarn.calls[0][:3] == ["yarn", "up", "-R"] and "--mode=update-lockfile" in yarn.calls[0]
+
+
+def test_a_package_that_moved_without_clearing_is_put_back(tmp_path, monkeypatch):
+    root = _pkg(tmp_path)
+    yarn = _Yarn(root)
+    monkeypatch.setattr(p, "run", yarn)
+    before = [_adv("brace-expansion", "GHSA-A", "<1.1.17", ["1.1.16"], ["m@npm:3"]),
+              _adv("qs", "GHSA-C", "<6.17.0", ["6.15.3"], ["y@npm:1"])]
+    still_qs = [_adv("qs", "GHSA-C", "<6.17.0", ["6.16.0"], ["y@npm:1"])]
+    _audits(monkeypatch, still_qs, still_qs)      # qs moved to 6.16.0, still vulnerable
+    bumped, left, note = p.bump_in_range(root, before)
+    assert [b["pkg"] for b in bumped] == ["brace-expansion"]
+    assert left == still_qs
+    # Two runs: the discovery run with both names, then the keep run with only the helpful.
+    assert len(yarn.calls) == 2
+    assert "qs" in yarn.calls[0] and "qs" not in yarn.calls[1]
+    assert "brace-expansion" in yarn.calls[1]
+
+
+def test_nothing_cleared_means_nothing_kept(tmp_path, monkeypatch):
+    root = _pkg(tmp_path)
+    monkeypatch.setattr(p, "run", _Yarn(root))
+    before = [_adv("qs", "GHSA-C", "<6.17.0", ["6.15.3"], ["y@npm:1"])]
+    _audits(monkeypatch, before)
+    bumped, left, note = p.bump_in_range(root, before)
+    assert bumped == [] and left == before and note == ""
+    assert (root / "yarn.lock").read_text() == LOCK            # restored byte for byte
+
+
+def test_a_rewritten_manifest_abandons_the_pass(tmp_path, monkeypatch):
+    root = _pkg(tmp_path, dependencies={"qs": "^6.11.0"})
+    manifest = (root / "package.json").read_text()
+    monkeypatch.setattr(p, "run", _Yarn(root, rewrite_manifest=True))
+    before = [_adv("qs", "GHSA-C", "<6.16.0", ["6.15.3"], ["y@npm:1"])]
+    _audits(monkeypatch, [])
+    bumped, left, note = p.bump_in_range(root, before)
+    assert bumped == [] and left == before
+    assert "package.json" in note
+    assert (root / "package.json").read_text() == manifest
+    assert (root / "yarn.lock").read_text() == LOCK
+
+
+def test_a_failed_yarn_up_restores_and_says_why(tmp_path, monkeypatch):
+    root = _pkg(tmp_path)
+    monkeypatch.setattr(p, "run", _Yarn(root, rc=1))
+    before = [_adv("qs", "GHSA-C", "<6.16.0", ["6.15.3"], ["y@npm:1"])]
+    _audits(monkeypatch, before)
+    bumped, left, note = p.bump_in_range(root, before)
+    assert bumped == [] and left == before
+    assert "failed" in note and "boom" in note
+    assert (root / "yarn.lock").read_text() == LOCK
+
+
+def test_no_advisories_means_no_yarn_run_at_all(tmp_path, monkeypatch):
+    root = _pkg(tmp_path)
+    yarn = _Yarn(root)
+    monkeypatch.setattr(p, "run", yarn)
+    assert p.bump_in_range(root, []) == ([], [], "")
+    assert yarn.calls == []
+
+
+def test_bumped_report_names_versions_and_advisories():
+    out = p.render_bumped([{"pkg": "axios", "from": ["1.9.0"], "to": ["1.20.0"],
+                            "severity": "high", "ghsas": {"GHSA-B", "GHSA-A"}}])
+    assert out == "- `axios` 1.9.0 → 1.20.0 (high, GHSA-A, GHSA-B)"
+
+
+def test_summary_counts_the_bump_pass_first():
+    bumped = [{"pkg": "axios", "ghsas": {"A", "B"}}, {"pkg": "qs", "ghsas": {"C"}}]
+    got = p.summarise([], [], [], bumped)
+    assert got.startswith("2 packages re-resolved in range (3 advisories)"), got
+    applied = [{"key": "tar", "target": "7.5.22", "severity": "high", "ghsas": {"G1"}}]
+    got = p.summarise(applied, [], [{"pkg": "vite"}], bumped)
+    assert "re-resolved" in got and "tar -> ^7.5.22" in got and "1 need a human" in got
