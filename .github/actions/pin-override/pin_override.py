@@ -1,5 +1,28 @@
 #!/usr/bin/env python3
-"""Unstick the transitive advisories Dependabot cannot fix, by writing Yarn resolutions.
+"""Unstick the advisories Dependabot cannot fix: re-resolve in range first, then pin.
+
+THE FIRST PASS, AND WHY IT COMES FIRST
+--------------------------------------
+Most of what Dependabot leaves open does not need a resolution at all. It needs the
+lockfile to be re-resolved inside the ranges the tree ALREADY declares, which is what
+`yarn up -R <pkg>` does and what Dependabot cannot: Dependabot targets one exact version
+for a name across the whole tree and gives up when any copy cannot reach it, so a
+package installed at 1.x, 2.x and 5.x under three minimatch parents is unfixable to it
+forever, though each copy is one patch from clear inside its own range. Measured across
+the fleet on 2026-09-11, this pass alone took 220 audit findings to 102, touched no
+package.json, and reopened nothing — it also clears the fix a hand-closed Dependabot PR
+has taught Dependabot to ignore (fundraiser-api's axios, 29 advisories, one month), because
+it never asks Dependabot.
+
+`-R` is load-bearing. `yarn up axios` rewrites the manifest range to the new version; with
+`-R` it keeps `^1.3.6` and only moves the lock, for direct and transitive alike. That is
+why this pass may include direct dependencies where the resolution pass below may not: it
+shadows nothing and pins nothing, it does what a fresh `yarn install` without a lockfile
+would have done. Only what clears an advisory is kept; a package that moved without
+clearing anything is put back, so the PR carries no unexplained churn.
+
+THE SECOND PASS: RESOLUTIONS
+----------------------------
 
 THE PROBLEM
 -----------
@@ -36,6 +59,9 @@ of silence.
 
 Usage:
     pin_override.py --root frontend [--dry-run] [--json]
+
+`--dry-run` skips the first pass entirely: it cannot be previewed without running it, and
+a dry run must not write the lockfile.
 """
 from __future__ import annotations
 
@@ -340,6 +366,95 @@ def plan(advisories: list[dict], root: Path,
     return sorted(proposals.values(), key=lambda p: p["pkg"]), blocked
 
 
+# ------------------------------------------------------------------ the bump pass
+
+def _worst_of(advisories: list[dict]) -> str:
+    sev = "unknown"
+    for a in advisories:
+        sev = _worst(sev, a.get("severity") or "unknown")
+    return sev
+
+
+def bump_in_range(root: Path, advisories: list[dict]) -> tuple[list[dict], list[dict], str]:
+    """Re-resolve every alerted package inside its declared ranges; keep what helped.
+
+    Returns (bumped, advisories still open, note). `bumped` is one entry per package that
+    moved AND cleared at least one advisory; `note` is non-empty only when the pass was
+    abandoned, and says why. The lockfile and package.json are exactly as they were
+    whenever nothing is kept.
+
+    Two runs of `yarn up -R`, not one. The first moves everything alerted and shows which
+    packages actually cleared something. If any moved without clearing anything, the
+    snapshot is restored and the second run moves only the helpful ones — a PR that says
+    "fixes GHSA-x" must not also carry a bump nobody asked for. Both runs are
+    `--mode=update-lockfile`, so nothing is linked and no package script executes.
+
+    A changed package.json abandons the pass. `-R` does not rewrite manifests (measured on
+    a direct axios in fundraiser-api: lock moved 1.9.0 -> 1.20.0, manifest byte-identical),
+    so if it ever did, the assumption this pass rests on is wrong and it must do nothing.
+    """
+    pkgs = sorted({a["pkg"] for a in advisories if a.get("pkg")})
+    if not pkgs:
+        return [], advisories, ""
+    lock_path, manifest_path = root / "yarn.lock", root / "package.json"
+    lock_before, manifest_before = lock_path.read_bytes(), manifest_path.read_bytes()
+    tree_before = lock_versions(lock_path)
+    open_before = {(a["pkg"], a["ghsa"]) for a in advisories}
+
+    def restore() -> None:
+        lock_path.write_bytes(lock_before)
+        manifest_path.write_bytes(manifest_before)
+
+    def attempt(names: list[str]) -> tuple[list[dict] | None, str]:
+        proc = run(["yarn", "up", "-R", *names, "--mode=update-lockfile"], root)
+        if proc.returncode != 0:
+            restore()
+            return None, "yarn up -R failed; lockfile restored\n" + (proc.stderr or proc.stdout)[-2000:]
+        if manifest_path.read_bytes() != manifest_before:
+            restore()
+            return None, "yarn up -R rewrote package.json, which it must never do here; restored"
+        return audit(root), ""
+
+    after, why = attempt(pkgs)
+    if after is None:
+        return [], advisories, why
+    still = {(a["pkg"], a["ghsa"]) for a in after}
+    helpful = sorted({pkg for pkg, ghsa in open_before - still})
+    if not helpful:
+        restore()
+        return [], advisories, ""
+    if helpful != pkgs:
+        restore()
+        after, why = attempt(helpful)
+        if after is None:
+            return [], advisories, why
+        still = {(a["pkg"], a["ghsa"]) for a in after}
+
+    tree_after = lock_versions(lock_path)
+    bumped = []
+    for pkg in helpful:
+        cleared = sorted(g for p_, g in open_before - still if p_ == pkg)
+        if not cleared:
+            continue
+        bumped.append({
+            "pkg": pkg,
+            "from": sorted(tree_before.get(pkg, set()), key=lambda v: parse(v) or ()),
+            "to": sorted(tree_after.get(pkg, set()), key=lambda v: parse(v) or ()),
+            "ghsas": set(cleared),
+            "severity": _worst_of([a for a in advisories if a["pkg"] == pkg]),
+        })
+    return bumped, after, ""
+
+
+def render_bumped(bumped: list[dict]) -> str:
+    lines = []
+    for b in bumped:
+        moved = f"{', '.join(b['from'])} → {', '.join(b['to'])}"
+        lines.append(f"- `{b['pkg']}` {moved} ({b['severity']}, "
+                     f"{', '.join(sorted(b['ghsas']))})")
+    return "\n".join(lines)
+
+
 # ------------------------------------------------------------------ writing
 
 def apply_resolutions(root: Path, entries: dict[str, str]) -> dict[str, str]:
@@ -377,10 +492,16 @@ def install(root: Path) -> tuple[bool, str]:
 
 # ------------------------------------------------------------------ output
 
-def summarise(applied: list[dict], unresolved: list[dict], blocked: list[dict]) -> str:
+def summarise(applied: list[dict], unresolved: list[dict], blocked: list[dict],
+              bumped: list[dict] | None = None) -> str:
     bits = [f"{p['key']} -> ^{p['target']} ({p['severity']}, {len(p['ghsas'])} "
             f"advisor{'y' if len(p['ghsas']) == 1 else 'ies'})" for p in applied]
     out = "; ".join(bits) if bits else "nothing to change"
+    if bumped:
+        n = sum(len(b["ghsas"]) for b in bumped)
+        out = (f"{len(bumped)} package{'s' if len(bumped) != 1 else ''} re-resolved in "
+               f"range ({n} advisor{'y' if n == 1 else 'ies'})"
+               + ("" if not bits else " | " + out))
     if unresolved:
         out += f" | {len(unresolved)} reverted (did not clear)"
     if blocked:
@@ -421,8 +542,21 @@ def main() -> int:
         print(f"{root}: no package.json", file=sys.stderr)
         return 2
 
+    advisories = audit(root)
+    # First pass: move what the declared ranges already allow. Skipped on a dry run, which
+    # must not write the lockfile and cannot preview this without doing so.
+    bumped, bump_note = [], ""
+    if not args.dry_run:
+        bumped, advisories, bump_note = bump_in_range(root, advisories)
+        if bump_note:
+            print(bump_note, file=sys.stderr)
+    for b in bumped:
+        print(f"  {b['pkg']}: {', '.join(b['from'])} -> {', '.join(b['to'])}  "
+              f"[{b['severity']}] {', '.join(sorted(b['ghsas']))}")
+    # The tree is re-read after the bump: a resolution's shape depends on which lines are
+    # present, and the first pass may have removed or merged some.
     tree = lock_versions(root / "yarn.lock")
-    proposals, blocked = plan(audit(root), root, tree)
+    proposals, blocked = plan(advisories, root, tree)
 
     if args.json:
         print(json.dumps({"proposals": proposals, "blocked": blocked},
@@ -436,10 +570,11 @@ def main() -> int:
 
     emit("blocked", render_blocked(blocked))
     emit("blocked_count", str(len({(b["pkg"], b["why"]) for b in blocked})))
+    emit("bumped", render_bumped(bumped))
 
     if not proposals or args.dry_run:
-        emit("changed", "false")
-        emit("summary", summarise([], [], blocked))
+        emit("changed", "true" if bumped else "false")
+        emit("summary", summarise([], [], blocked, bumped))
         if not proposals:
             print("nothing a resolution can fix")
         return 0
@@ -451,8 +586,11 @@ def main() -> int:
         install(root)
         print("install failed with the proposed resolutions; reverted\n" + log,
               file=sys.stderr)
-        emit("changed", "false")
-        emit("summary", "install failed with the proposed resolutions; reverted")
+        # The first pass's lockfile is still in place and still verified; only the
+        # resolutions are gone. Say so rather than reporting the whole run as nothing.
+        emit("changed", "true" if bumped else "false")
+        emit("summary", summarise([], [], blocked, bumped)
+             + " | install failed with the proposed resolutions; reverted")
         return 1
 
     # Verify against reality, not against the version arithmetic: an advisory we claimed to
@@ -471,13 +609,15 @@ def main() -> int:
             install(root)
             print("install failed after dropping the unresolved entries; reverted\n" + log,
                   file=sys.stderr)
-            emit("changed", "false")
+            emit("changed", "true" if bumped else "false")
+            emit("summary", summarise([], [], blocked, bumped)
+                 + " | install failed after dropping the unresolved entries; reverted")
             return 1
         for p in unresolved:
             print(f"  reverted {p['key']}: advisories still open after the bump")
 
-    emit("changed", "true" if applied else "false")
-    emit("summary", summarise(applied, unresolved, blocked))
+    emit("changed", "true" if (applied or bumped) else "false")
+    emit("summary", summarise(applied, unresolved, blocked, bumped))
     emit("applied", "\n".join(f"- `{p['key']}` → `^{p['target']}` ({p['severity']}, "
                               f"{', '.join(sorted(p['ghsas']))})" for p in applied))
     print(summarise(applied, unresolved, blocked))

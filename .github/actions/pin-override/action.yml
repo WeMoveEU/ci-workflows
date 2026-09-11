@@ -1,8 +1,10 @@
 name: Dependabot pin override
 description: >-
-  Write Yarn `resolutions` for the transitive advisories Dependabot cannot fix, when a
-  parent pins the vulnerable package to an exact version. Stays inside the compatibility
-  line, verifies every entry by re-running the audit, and names whatever it refuses.
+  Fix the advisories Dependabot cannot. First re-resolves every alerted package inside the
+  ranges the tree already declares (`yarn up -R`, lockfile only); then writes Yarn
+  `resolutions` for what is left when a parent pins the vulnerable package exactly. Stays
+  inside the compatibility line, verifies every step by re-running the audit, and names
+  whatever it refuses.
 
 inputs:
   path:
@@ -23,6 +25,11 @@ outputs:
   summary:
     description: One-line summary of what was applied, reverted and skipped.
     value: ${{ steps.override.outputs.summary }}
+  bumped:
+    description: >-
+      Markdown list of the packages re-resolved inside their already-declared ranges
+      (lockfile only, no package.json change) and the advisories that cleared.
+    value: ${{ steps.override.outputs.bumped }}
   applied:
     description: Markdown list of the resolutions written.
     value: ${{ steps.override.outputs.applied }}
