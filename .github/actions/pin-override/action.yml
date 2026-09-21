@@ -1,16 +1,20 @@
 name: Dependabot pin override
 description: >-
   Fix the advisories Dependabot cannot. First re-resolves every alerted package inside the
-  ranges the tree already declares (`yarn up -R`, lockfile only); then writes Yarn
-  `resolutions` for what is left when a parent pins the vulnerable package exactly. Stays
-  inside the compatibility line, verifies every step by re-running the audit, and names
-  whatever it refuses.
+  ranges the tree already declares (`yarn up -R`, lockfile only); then moves a PARENT when
+  a newer release inside the parent's own line declares a range the fix satisfies (socks
+  2.8.10 -> ip-address 10.x, which Dependabot never tries below a direct dependency); then
+  writes Yarn `resolutions` for what is left when a parent pins the vulnerable package
+  exactly. A root holding pyproject.toml + uv.lock gets the first pass in uv's dialect
+  (`uv lock --upgrade-package '<pkg><next-line>'`, audited with pip-audit). Stays inside
+  the compatibility line, verifies every step by re-running the audit, and names whatever
+  it refuses.
 
 inputs:
   path:
     description: >-
-      Workspace directory holding package.json and yarn.lock, relative to the
-      workspace root (e.g. "backend").
+      Directory holding package.json + yarn.lock, or pyproject.toml + uv.lock, or both,
+      relative to the workspace root (e.g. "backend").
     required: false
     default: "."
   dry-run:
@@ -28,7 +32,9 @@ outputs:
   bumped:
     description: >-
       Markdown list of the packages re-resolved inside their already-declared ranges
-      (lockfile only, no package.json change) and the advisories that cleared.
+      (lockfile only, no manifest change) and the advisories that cleared — the alerted
+      packages themselves, the parents moved on their behalf (named with the child they
+      moved), and the uv packages re-locked inside their line.
     value: ${{ steps.override.outputs.bumped }}
   applied:
     description: Markdown list of the resolutions written.
@@ -48,7 +54,9 @@ runs:
     # Same reason python-pins is an action rather than a reusable workflow.
     #
     # The caller is responsible for node + corepack being on PATH: this runs the repo's own
-    # pinned Yarn, because the lockfile it rewrites embeds a hash of the Yarn version.
+    # pinned Yarn, because the lockfile it rewrites embeds a hash of the Yarn version. For a
+    # Python root the caller puts `uv` on PATH (astral-sh/setup-uv); pip-audit is fetched
+    # with `uv run --with`, so nothing else is installed.
     - name: Write pin overrides
       id: override
       shell: bash

@@ -21,6 +21,29 @@ shadows nothing and pins nothing, it does what a fresh `yarn install` without a 
 would have done. Only what clears an advisory is kept; a package that moved without
 clearing anything is put back, so the PR carries no unexplained churn.
 
+THE PARENT PASS, BETWEEN THE TWO
+--------------------------------
+Some advisories survive the first pass for a reason the first pass cannot see: the fix
+lives outside the range the PARENT declares, and a newer release of that parent — inside
+the parent's own line — already declares a range that admits it. ip-address 9.0.5 sat
+under socks@^2.8.3 for two months: socks 2.8.4 wanted ^9.0.5, socks 2.8.10 wants ^10.1.1,
+and `yarn up -R socks` moved both in one go. Dependabot never tries this — its security
+job rewrites a parent requirement only when the parent is a DIRECT dependency, and socks
+is four levels down under node-gyp — so it logged `latest-resolvable-version: 9.0.5` and
+gave up, every day. This pass asks the registry which in-line parent release would let
+the child reach a fixed version, moves that parent with `yarn up -R`, and keeps it only
+if the audit confirms the child's advisory is gone. Same rules as the first pass: lockfile
+only, manifest untouched, the parent's compatibility line never crossed.
+
+THE PYTHON PASS (uv)
+--------------------
+A root holding `pyproject.toml` + `uv.lock` gets the first pass in uv's dialect:
+`uv lock --upgrade-package '<pkg><next-line>'` for every package pip-audit reports,
+capped at the package's own compatibility line so a floor like `pytest>=8.3.5` never
+becomes an 8 -> 9 jump a robot chose. Verified by re-running pip-audit over a fresh
+`uv export`; what did not clear is put back and named. Seven fundraiser-api advisories
+sat in range for three months for want of exactly this command.
+
 THE SECOND PASS: RESOLUTIONS
 ----------------------------
 
@@ -59,6 +82,10 @@ of silence.
 
 Usage:
     pin_override.py --root frontend [--dry-run] [--json]
+
+The root may hold package.json (+ yarn.lock), or pyproject.toml + uv.lock, or both. The
+npm passes need the repo's own Yarn on PATH; the Python pass needs `uv` on PATH (pip-audit
+is fetched by `uv run --with`).
 
 `--dry-run` skips the first pass entirely: it cannot be previewed without running it, and
 a dry run must not write the lockfile.
@@ -158,6 +185,95 @@ def _clause_matches(target: tuple[int, ...], clause: str) -> bool:
     return True
 
 
+_PARTIAL_RE = re.compile(r"^v?=?(\d+|[xX*])(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?$")
+
+
+def _partial(raw: str) -> tuple[tuple[int, int, int], int] | None:
+    """"1.2" -> ((1, 2, 0), 2): the version padded to three places, and how many places
+    were actually given. x/X/* count as "not given". None for tags, URLs and protocols."""
+    m = _PARTIAL_RE.match(raw.strip())
+    if not m:
+        return None
+    nums: list[int] = []
+    for part in m.groups():
+        if part is None or part in ("x", "X", "*"):
+            break
+        nums.append(int(part))
+    return (tuple(nums + [0] * (3 - len(nums))), len(nums))  # type: ignore[return-value]
+
+
+def _bump(v: tuple[int, int, int], at: int) -> tuple[int, int, int]:
+    """The first version above the range that `v` with `at` given places describes."""
+    if at <= 1:
+        return (v[0] + 1, 0, 0)
+    if at == 2:
+        return (v[0], v[1] + 1, 0)
+    return (v[0], v[1], v[2] + 1)
+
+
+def _comparator_matches(t: tuple[int, ...], comp: str) -> bool:
+    t3 = tuple(t) + (0,) * (3 - len(t))
+    if comp in ("", "*", "x", "X"):
+        return True
+    op = ""
+    for cand in ("^", "~", ">=", "<=", ">", "<", "="):
+        if comp.startswith(cand):
+            op, comp = cand, comp[len(cand):]
+            break
+    got = _partial(comp)
+    if got is None:
+        return False
+    v, n = got
+    if op == "^":
+        if v[0] > 0 or n <= 1:
+            hi = (v[0] + 1, 0, 0)
+        elif v[1] > 0 or n == 2:
+            hi = (0, v[1] + 1, 0)
+        else:
+            hi = (0, 0, v[2] + 1)
+        return v <= t3 < hi
+    if op == "~":
+        return v <= t3 < (_bump(v, 2) if n >= 2 else _bump(v, 1))
+    if op == ">=":
+        return t3 >= v
+    if op == ">":
+        return t3 >= _bump(v, n) if n < 3 else t3 > v
+    if op == "<":
+        return t3 < v
+    if op == "<=":
+        return t3 < _bump(v, n) if n < 3 else t3 <= v
+    # bare version or x-range: "1.2.3" exact, "1.2" / "1.2.x" / "1" a range
+    return v <= t3 < _bump(v, n) if n < 3 else t3 == v
+
+
+def satisfies(v: str, rng: str) -> bool:
+    """Does release `v` satisfy a dependency RANGE as a package.json declares it?
+
+    The shapes a manifest actually contains: `^1.2.3`, `~1.2.3`, comparator sets, x-ranges
+    (`1.x`, `1.2.*`, `1`), `*`, hyphen ranges (`1.2 - 2.3`) and `||`. A prerelease never
+    satisfies (parse() rejects it, and these trees pin none); a tag, URL or `workspace:`
+    protocol never satisfies either, so a parent declaring one is simply never moved.
+    """
+    target = parse(v)
+    if target is None:
+        return False
+    for alt in rng.split("||"):
+        alt = alt.strip()
+        hyphen = re.match(r"^(\S+)\s+-\s+(\S+)$", alt)
+        if hyphen:
+            lo, hi = _partial(hyphen.group(1)), _partial(hyphen.group(2))
+            if lo is None or hi is None:
+                continue
+            t3 = tuple(target) + (0,) * (3 - len(target))
+            upper_ok = t3 < _bump(hi[0], hi[1]) if hi[1] < 3 else t3 <= hi[0]
+            if lo[0] <= t3 and upper_ok:
+                return True
+            continue
+        if all(_comparator_matches(target, c) for c in alt.split()):
+            return True
+    return False
+
+
 # ------------------------------------------------------------------ the tree
 
 LOCK_ENTRY_RE = re.compile(r'^"?(?P<desc>[^\n]+?)"?:$')
@@ -194,6 +310,16 @@ def dependent_name(raw: str) -> str | None:
     if not m or "workspace:" in raw:
         return None
     return m.group("name")
+
+
+def dependent_pair(raw: str) -> tuple[str, str] | None:
+    """"socks@npm:2.8.4" -> ("socks", "2.8.4"). None for a workspace, a patch: descriptor or
+    an odd shape — a parent whose installed version is not a plain release cannot be placed
+    on a line, so it is never a candidate for the parent pass."""
+    m = DEPENDENT_RE.match(raw.strip())
+    if not m or "workspace:" in raw or "@patch:" in raw or parse(m.group("ver")) is None:
+        return None
+    return m.group("name"), m.group("ver")
 
 
 # ------------------------------------------------------------------ io
@@ -235,11 +361,16 @@ def audit(root: Path) -> list[dict]:
     return out
 
 
-_registry_cache: dict[str, list[str]] = {}
+_registry_cache: dict[str, dict[str, dict]] = {}
 
 
-def published(pkg: str) -> list[str]:
-    """Release versions of `pkg` on the registry, prereleases excluded."""
+def registry_versions(pkg: str) -> dict[str, dict]:
+    """Release version -> abbreviated metadata for `pkg`, prereleases excluded.
+
+    The install-v1 document carries each version's `dependencies`, which is what the
+    parent pass reads: it has to know what range socks 2.8.10 declares for ip-address
+    before it can say that moving socks would move ip-address out of the advisory.
+    """
     if pkg in _registry_cache:
         return _registry_cache[pkg]
     url = f"{REGISTRY}/{urllib.parse.quote(pkg, safe='@')}"
@@ -252,8 +383,14 @@ def published(pkg: str) -> list[str]:
             data = json.loads(resp.read().decode())
     except (urllib.error.URLError, json.JSONDecodeError) as exc:
         raise SystemExit(f"{pkg}: cannot read the registry ({exc})") from exc
-    _registry_cache[pkg] = [v for v in (data.get("versions") or {}) if parse(v)]
+    _registry_cache[pkg] = {v: (meta or {}) for v, meta in (data.get("versions") or {}).items()
+                            if parse(v)}
     return _registry_cache[pkg]
+
+
+def published(pkg: str) -> list[str]:
+    """Release versions of `pkg` on the registry, prereleases excluded."""
+    return list(registry_versions(pkg))
 
 
 def highest_in_line(pkg: str, installed: str) -> str | None:
@@ -366,13 +503,88 @@ def plan(advisories: list[dict], root: Path,
     return sorted(proposals.values(), key=lambda p: p["pkg"]), blocked
 
 
-# ------------------------------------------------------------------ the bump pass
+# ------------------------------------------------------------------ the bump passes
 
 def _worst_of(advisories: list[dict]) -> str:
     sev = "unknown"
     for a in advisories:
         sev = _worst(sev, a.get("severity") or "unknown")
     return sev
+
+
+class _Snapshot:
+    """The lockfile and manifest as they were, so a pass can put them back byte for byte."""
+
+    def __init__(self, root: Path):
+        self.lock, self.manifest = root / "yarn.lock", root / "package.json"
+        self.lock_before = self.lock.read_bytes()
+        self.manifest_before = self.manifest.read_bytes()
+
+    def restore(self) -> None:
+        self.lock.write_bytes(self.lock_before)
+        self.manifest.write_bytes(self.manifest_before)
+
+    def manifest_changed(self) -> bool:
+        return self.manifest.read_bytes() != self.manifest_before
+
+
+def _reresolve(root: Path, names: list[str], snap: _Snapshot) -> tuple[list[dict] | None, str]:
+    """`yarn up -R` the named packages, lockfile only, and audit the result.
+
+    (None, why) with everything restored when yarn fails or — the assumption every bump
+    pass rests on — package.json changed. `-R` does not rewrite manifests (measured on a
+    direct axios in fundraiser-api: lock moved 1.9.0 -> 1.20.0, manifest byte-identical),
+    so if it ever does, the pass must do nothing rather than guess. `--mode=update-lockfile`
+    means nothing is linked and no package script executes.
+    """
+    proc = run(["yarn", "up", "-R", *names, "--mode=update-lockfile"], root)
+    if proc.returncode != 0:
+        snap.restore()
+        return None, "yarn up -R failed; lockfile restored\n" + (proc.stderr or proc.stdout)[-2000:]
+    if snap.manifest_changed():
+        snap.restore()
+        return None, "yarn up -R rewrote package.json, which it must never do here; restored"
+    return audit(root), ""
+
+
+def _keep_helpful(root: Path, snap: _Snapshot, advisories: list[dict],
+                  targets: dict[str, set[tuple[str, str]]],
+                  ) -> tuple[list[str], list[dict], set[tuple[str, str]], str]:
+    """Bump every name in `targets`; keep only those that cleared one of their advisories.
+
+    `targets` maps a package to re-resolve -> the (pkg, ghsa) advisories it is meant to
+    clear: its own for the first pass, its child's for the parent pass. Two runs of
+    `yarn up -R`, not one. The first moves everything and shows which names actually
+    cleared something; if any moved without clearing, the snapshot is restored and the
+    second run moves only the helpful ones — a PR that says "fixes GHSA-x" must not also
+    carry a bump nobody asked for.
+
+    Returns (helpful names, audit after, advisories cleared, note). No helpful names means
+    the files are exactly as they were.
+    """
+    names = sorted(targets)
+    open_before = {(a["pkg"], a["ghsa"]) for a in advisories}
+    after, why = _reresolve(root, names, snap)
+    if after is None:
+        return [], advisories, set(), why
+    cleared = open_before - {(a["pkg"], a["ghsa"]) for a in after}
+    helpful = [n for n in names if targets[n] & cleared]
+    if not helpful:
+        snap.restore()
+        return [], advisories, set(), ""
+    if helpful != names:
+        snap.restore()
+        after, why = _reresolve(root, helpful, snap)
+        if after is None:
+            return [], advisories, set(), why
+        cleared = open_before - {(a["pkg"], a["ghsa"]) for a in after}
+    return helpful, after, cleared, ""
+
+
+def _moved(before: dict[str, set[str]], after: dict[str, set[str]],
+           pkg: str) -> tuple[list[str], list[str]]:
+    key = lambda v: parse(v) or ()  # noqa: E731
+    return (sorted(before.get(pkg, set()), key=key), sorted(after.get(pkg, set()), key=key))
 
 
 def bump_in_range(root: Path, advisories: list[dict]) -> tuple[list[dict], list[dict], str]:
@@ -382,66 +594,105 @@ def bump_in_range(root: Path, advisories: list[dict]) -> tuple[list[dict], list[
     moved AND cleared at least one advisory; `note` is non-empty only when the pass was
     abandoned, and says why. The lockfile and package.json are exactly as they were
     whenever nothing is kept.
-
-    Two runs of `yarn up -R`, not one. The first moves everything alerted and shows which
-    packages actually cleared something. If any moved without clearing anything, the
-    snapshot is restored and the second run moves only the helpful ones — a PR that says
-    "fixes GHSA-x" must not also carry a bump nobody asked for. Both runs are
-    `--mode=update-lockfile`, so nothing is linked and no package script executes.
-
-    A changed package.json abandons the pass. `-R` does not rewrite manifests (measured on
-    a direct axios in fundraiser-api: lock moved 1.9.0 -> 1.20.0, manifest byte-identical),
-    so if it ever did, the assumption this pass rests on is wrong and it must do nothing.
     """
-    pkgs = sorted({a["pkg"] for a in advisories if a.get("pkg")})
-    if not pkgs:
+    targets: dict[str, set[tuple[str, str]]] = {}
+    for a in advisories:
+        if a.get("pkg"):
+            targets.setdefault(a["pkg"], set()).add((a["pkg"], a["ghsa"]))
+    if not targets:
         return [], advisories, ""
-    lock_path, manifest_path = root / "yarn.lock", root / "package.json"
-    lock_before, manifest_before = lock_path.read_bytes(), manifest_path.read_bytes()
-    tree_before = lock_versions(lock_path)
-    open_before = {(a["pkg"], a["ghsa"]) for a in advisories}
-
-    def restore() -> None:
-        lock_path.write_bytes(lock_before)
-        manifest_path.write_bytes(manifest_before)
-
-    def attempt(names: list[str]) -> tuple[list[dict] | None, str]:
-        proc = run(["yarn", "up", "-R", *names, "--mode=update-lockfile"], root)
-        if proc.returncode != 0:
-            restore()
-            return None, "yarn up -R failed; lockfile restored\n" + (proc.stderr or proc.stdout)[-2000:]
-        if manifest_path.read_bytes() != manifest_before:
-            restore()
-            return None, "yarn up -R rewrote package.json, which it must never do here; restored"
-        return audit(root), ""
-
-    after, why = attempt(pkgs)
-    if after is None:
-        return [], advisories, why
-    still = {(a["pkg"], a["ghsa"]) for a in after}
-    helpful = sorted({pkg for pkg, ghsa in open_before - still})
+    snap = _Snapshot(root)
+    tree_before = lock_versions(snap.lock)
+    helpful, after, cleared, note = _keep_helpful(root, snap, advisories, targets)
     if not helpful:
-        restore()
-        return [], advisories, ""
-    if helpful != pkgs:
-        restore()
-        after, why = attempt(helpful)
-        if after is None:
-            return [], advisories, why
-        still = {(a["pkg"], a["ghsa"]) for a in after}
-
-    tree_after = lock_versions(lock_path)
+        return [], advisories, note
+    tree_after = lock_versions(snap.lock)
     bumped = []
     for pkg in helpful:
-        cleared = sorted(g for p_, g in open_before - still if p_ == pkg)
-        if not cleared:
-            continue
+        frm, to = _moved(tree_before, tree_after, pkg)
         bumped.append({
-            "pkg": pkg,
-            "from": sorted(tree_before.get(pkg, set()), key=lambda v: parse(v) or ()),
-            "to": sorted(tree_after.get(pkg, set()), key=lambda v: parse(v) or ()),
-            "ghsas": set(cleared),
+            "pkg": pkg, "from": frm, "to": to,
+            "ghsas": {g for p_, g in cleared if p_ == pkg},
             "severity": _worst_of([a for a in advisories if a["pkg"] == pkg]),
+        })
+    return bumped, after, ""
+
+
+def parent_target(parent: str, installed: str, child: str, vulnerable: str) -> str | None:
+    """The newest release of `parent` inside `installed`'s line whose declared range for
+    `child` resolves to a version outside `vulnerable`, or None.
+
+    "Resolves to" means what Yarn would pick: the newest published `child` satisfying that
+    range. A parent release that no longer depends on the child counts too — the
+    vulnerable copy leaves the tree with it. This is a filter, not the proof: the audit
+    after `yarn up -R` decides what is kept. socks 2.8.4 declared ip-address ^9.0.5 and
+    2.8.10 declares ^10.1.1; with ip-address's fix at 10.3.1 this returns 2.8.10.
+    """
+    want = line_of(installed)
+    if want is None:
+        return None
+    versions = registry_versions(parent)
+    newer = [v for v in versions if line_of(v) == want and parse(v) > parse(installed)]
+    child_versions = published(child) if newer else []
+    for v in sorted(newer, key=parse, reverse=True):
+        deps = versions[v].get("dependencies") or {}
+        if child not in deps:
+            return v
+        best = max((c for c in child_versions if satisfies(c, deps[child])),
+                   key=parse, default=None)
+        if best is not None and not in_range(best, vulnerable):
+            return v
+    return None
+
+
+def bump_parents(root: Path, advisories: list[dict]) -> tuple[list[dict], list[dict], str]:
+    """Move the PARENT when the child cannot reach its fix inside the parent's range.
+
+    For every open advisory whose vulnerable copy is pulled by a parent that has a newer
+    release in its own line declaring a range the fix satisfies, `yarn up -R <parent>`.
+    Lockfile only; the parent's line is never crossed; kept only when the audit shows the
+    child's advisory gone. Dependabot never attempts this — its security job rewrites a
+    parent requirement only for a DIRECT parent — which is how ip-address sat under socks
+    for two months with the fix one patch of socks away.
+
+    Returns (bumped, advisories still open, note), like bump_in_range; each `bumped` entry
+    also names the child it moved.
+    """
+    targets: dict[str, set[tuple[str, str]]] = {}
+    plans: dict[str, dict] = {}
+    for adv in advisories:
+        if not any(in_range(v, adv["vulnerable"]) for v in adv["installed"]):
+            continue
+        for raw in adv["dependents"]:
+            pair = dependent_pair(raw)
+            if pair is None:
+                continue
+            parent, pver = pair
+            if parent not in plans:
+                target = parent_target(parent, pver, adv["pkg"], adv["vulnerable"])
+                if target is None:
+                    continue
+                plans[parent] = {"from": pver, "to": target, "child": adv["pkg"]}
+            targets.setdefault(parent, set()).add((adv["pkg"], adv["ghsa"]))
+    if not targets:
+        return [], advisories, ""
+    snap = _Snapshot(root)
+    tree_before = lock_versions(snap.lock)
+    helpful, after, cleared, note = _keep_helpful(root, snap, advisories, targets)
+    if not helpful:
+        return [], advisories, note
+    tree_after = lock_versions(snap.lock)
+    bumped = []
+    for parent in helpful:
+        child = plans[parent]["child"]
+        pf, pt = _moved(tree_before, tree_after, parent)
+        cf, ct = _moved(tree_before, tree_after, child)
+        mine = cleared & targets[parent]
+        bumped.append({
+            "pkg": parent, "from": pf, "to": pt,
+            "child": child, "child_from": cf, "child_to": ct,
+            "ghsas": {g for _, g in mine},
+            "severity": _worst_of([a for a in advisories if (a["pkg"], a["ghsa"]) in mine]),
         })
     return bumped, after, ""
 
@@ -450,9 +701,152 @@ def render_bumped(bumped: list[dict]) -> str:
     lines = []
     for b in bumped:
         moved = f"{', '.join(b['from'])} → {', '.join(b['to'])}"
-        lines.append(f"- `{b['pkg']}` {moved} ({b['severity']}, "
+        via = ""
+        if b.get("child"):
+            via = (f" — parent of `{b['child']}` "
+                   f"{', '.join(b['child_from'])} → {', '.join(b['child_to'])}")
+        lines.append(f"- `{b['pkg']}` {moved}{via} ({b['severity']}, "
                      f"{', '.join(sorted(b['ghsas']))})")
     return "\n".join(lines)
+
+
+# ------------------------------------------------------------------ the python pass (uv)
+
+UV_LOCK_RE = re.compile(r'^\[\[package\]\]\nname = "([^"]+)"\nversion = "([^"]+)"', re.M)
+
+
+def _norm(name: str) -> str:
+    """PyPI's normalisation: `Flask_Cors`, `flask.cors` and `flask-cors` are one project."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def uv_lock_versions(lock: Path) -> dict[str, set[str]]:
+    """package name -> every version in uv.lock (there is normally one per name)."""
+    out: dict[str, set[str]] = {}
+    if not lock.is_file():
+        return out
+    for name, ver in UV_LOCK_RE.findall(lock.read_text()):
+        out.setdefault(_norm(name), set()).add(ver)
+    return out
+
+
+def uv_audit(root: Path) -> list[dict]:
+    """pip-audit over a frozen `uv export`: one entry per (package, advisory).
+
+    The export is what the image installs from, so this audits exactly what ships.
+    `--no-deps --disable-pip` keeps pip-audit from resolving anything itself; the lock
+    already did. pip-audit exits 1 whenever it finds something, so the return code is not
+    an error — a body that is not JSON is, and it is raised rather than read as "clean".
+    Entries carry the same keys the Yarn audit produces so the reporting code is shared;
+    pip-audit publishes no severity, so it is "unknown".
+    """
+    req = root / ".pin-override-export.txt"
+    try:
+        proc = run(["uv", "export", "--frozen", "--no-hashes", "--no-emit-project",
+                    "-o", str(req)], root)
+        if proc.returncode != 0:
+            raise SystemExit("uv export failed:\n" + (proc.stderr or proc.stdout)[-2000:])
+        proc = run(["uv", "run", "--no-project", "--with", "pip-audit", "pip-audit",
+                    "-r", str(req), "--no-deps", "--disable-pip", "--format", "json",
+                    "--progress-spinner", "off"], root)
+        try:
+            data = json.loads(proc.stdout or "")
+        except json.JSONDecodeError as exc:
+            raise SystemExit("pip-audit produced no JSON:\n"
+                             + (proc.stderr or proc.stdout)[-2000:]) from exc
+    finally:
+        req.unlink(missing_ok=True)
+    out = []
+    for dep in data.get("dependencies") or []:
+        for v in dep.get("vulns") or []:
+            ghsa = next((a for a in (v.get("aliases") or []) if a.upper().startswith("GHSA-")),
+                        v.get("id") or "")
+            out.append({"pkg": _norm(dep["name"]), "installed": [dep["version"]],
+                        "ghsa": ghsa.upper(), "fix": list(v.get("fix_versions") or []),
+                        "severity": "unknown", "vulnerable": "", "dependents": []})
+    return out
+
+
+def uv_line_bound(installed: str) -> str:
+    """The `-P` constraint that keeps `installed` inside its line: "1.9.1" -> "<2",
+    "0.21.5" -> "<0.22". A version that cannot be placed on a line gets no bound."""
+    line = line_of(installed)
+    if line is None:
+        return ""
+    return f"<{line[0] + 1}" if len(line) == 1 else f"<0.{line[1] + 1}"
+
+
+def bump_uv_in_range(root: Path) -> tuple[list[dict], list[dict], str]:
+    """The first pass in uv's dialect: re-lock every audited package inside its own line.
+
+    `uv lock -P '<pkg><next-line>'` for all of them at once, then keep only those whose
+    advisories the second audit no longer lists — two runs, like the Yarn pass, so the PR
+    carries no unexplained movement. The bound is the package's compatibility line, so a
+    floor like `pytest>=8.3.5` never turns into an 8 -> 9 jump a robot chose; that stays a
+    person's call. pyproject.toml must come back byte-identical: `uv lock -P` never edits
+    it, and if it ever did the pass restores everything and stops.
+
+    Returns (bumped, advisories still open, note).
+    """
+    lock, manifest = root / "uv.lock", root / "pyproject.toml"
+    findings = uv_audit(root)
+    if not findings:
+        return [], [], ""
+    lock_before, manifest_before = lock.read_bytes(), manifest.read_bytes()
+    tree_before = uv_lock_versions(lock)
+    installed = {f["pkg"]: f["installed"][0] for f in findings}
+    open_before = {(f["pkg"], f["ghsa"]) for f in findings}
+
+    def restore() -> None:
+        lock.write_bytes(lock_before)
+        manifest.write_bytes(manifest_before)
+
+    def attempt(names: list[str]) -> tuple[list[dict] | None, str]:
+        args: list[str] = []
+        for n in names:
+            args += ["-P", f"{n}{uv_line_bound(installed[n])}"]
+        proc = run(["uv", "lock", *args], root)
+        if proc.returncode != 0:
+            restore()
+            return None, "uv lock failed; lockfile restored\n" + (proc.stderr or proc.stdout)[-2000:]
+        if manifest.read_bytes() != manifest_before:
+            restore()
+            return None, "uv lock rewrote pyproject.toml, which it must never do here; restored"
+        return uv_audit(root), ""
+
+    names = sorted(installed)
+    after, why = attempt(names)
+    if after is None:
+        return [], findings, why
+    cleared = open_before - {(f["pkg"], f["ghsa"]) for f in after}
+    helpful = [n for n in names if any(p_ == n for p_, _ in cleared)]
+    if not helpful:
+        restore()
+        return [], findings, ""
+    if helpful != names:
+        restore()
+        after, why = attempt(helpful)
+        if after is None:
+            return [], findings, why
+        cleared = open_before - {(f["pkg"], f["ghsa"]) for f in after}
+    tree_after = uv_lock_versions(lock)
+    bumped = []
+    for pkg in helpful:
+        frm, to = _moved(tree_before, tree_after, pkg)
+        bumped.append({"pkg": pkg, "from": frm, "to": to,
+                       "ghsas": {g for p_, g in cleared if p_ == pkg}, "severity": "unknown"})
+    return bumped, after, ""
+
+
+def uv_blocked(left: list[dict]) -> list[dict]:
+    """What the uv pass could not clear, in the shape render_blocked() expects."""
+    out = []
+    for f in left:
+        ver = f["installed"][0]
+        why = ("no fixed version published" if not f.get("fix")
+               else f"no fix inside the {line_name(ver)} line")
+        out.append({**f, "installed_one": ver, "why": why})
+    return out
 
 
 # ------------------------------------------------------------------ writing
@@ -532,31 +926,55 @@ def emit(name: str, value: str) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--root", default=".", help="workspace directory (has package.json)")
+    ap.add_argument("--root", default=".",
+                    help="directory holding package.json and/or pyproject.toml + uv.lock")
     ap.add_argument("--dry-run", action="store_true", help="report the plan, write nothing")
     ap.add_argument("--json", action="store_true", help="machine-readable plan on stdout")
     args = ap.parse_args()
 
     root = Path(args.root).resolve()
-    if not (root / "package.json").is_file():
-        print(f"{root}: no package.json", file=sys.stderr)
+    has_npm = (root / "package.json").is_file()
+    has_uv = (root / "pyproject.toml").is_file() and (root / "uv.lock").is_file()
+    if not (has_npm or has_uv):
+        print(f"{root}: neither package.json nor pyproject.toml + uv.lock", file=sys.stderr)
         return 2
 
-    advisories = audit(root)
-    # First pass: move what the declared ranges already allow. Skipped on a dry run, which
-    # must not write the lockfile and cannot preview this without doing so.
-    bumped, bump_note = [], ""
-    if not args.dry_run:
-        bumped, advisories, bump_note = bump_in_range(root, advisories)
-        if bump_note:
-            print(bump_note, file=sys.stderr)
-    for b in bumped:
-        print(f"  {b['pkg']}: {', '.join(b['from'])} -> {', '.join(b['to'])}  "
-              f"[{b['severity']}] {', '.join(sorted(b['ghsas']))}")
-    # The tree is re-read after the bump: a resolution's shape depends on which lines are
-    # present, and the first pass may have removed or merged some.
-    tree = lock_versions(root / "yarn.lock")
-    proposals, blocked = plan(advisories, root, tree)
+    bumped: list[dict] = []
+    blocked: list[dict] = []
+
+    # Python first: independent of the Yarn passes, and skipped on a dry run for the same
+    # reason they are — it cannot be previewed without writing the lockfile.
+    if has_uv and not args.dry_run:
+        uv_bumped, uv_left, uv_note = bump_uv_in_range(root)
+        if uv_note:
+            print(uv_note, file=sys.stderr)
+        for b in uv_bumped:
+            print(f"  {b['pkg']}: {', '.join(b['from'])} -> {', '.join(b['to'])}  [uv] "
+                  f"{', '.join(sorted(b['ghsas']))}")
+        bumped += uv_bumped
+        blocked += uv_blocked(uv_left)
+
+    proposals: list[dict] = []
+    if has_npm:
+        advisories = audit(root)
+        if not args.dry_run:
+            # First pass: move what the declared ranges already allow. Then the parents of
+            # whatever is left, when a newer in-line parent release would let the child
+            # reach its fix.
+            for step in (bump_in_range, bump_parents):
+                moved, advisories, note = step(root, advisories)
+                if note:
+                    print(note, file=sys.stderr)
+                for b in moved:
+                    via = f" (via {b['child']})" if b.get("child") else ""
+                    print(f"  {b['pkg']}{via}: {', '.join(b['from'])} -> {', '.join(b['to'])}  "
+                          f"[{b['severity']}] {', '.join(sorted(b['ghsas']))}")
+                bumped += moved
+        # The tree is re-read after the bumps: a resolution's shape depends on which lines
+        # are present, and the passes above may have removed or merged some.
+        tree = lock_versions(root / "yarn.lock")
+        proposals, npm_blocked = plan(advisories, root, tree)
+        blocked += npm_blocked
 
     if args.json:
         print(json.dumps({"proposals": proposals, "blocked": blocked},
@@ -586,7 +1004,7 @@ def main() -> int:
         install(root)
         print("install failed with the proposed resolutions; reverted\n" + log,
               file=sys.stderr)
-        # The first pass's lockfile is still in place and still verified; only the
+        # The bump passes' lockfile is still in place and still verified; only the
         # resolutions are gone. Say so rather than reporting the whole run as nothing.
         emit("changed", "true" if bumped else "false")
         emit("summary", summarise([], [], blocked, bumped)
