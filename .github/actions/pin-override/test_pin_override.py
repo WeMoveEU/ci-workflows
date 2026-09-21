@@ -752,6 +752,9 @@ def test_uv_audit_reads_pip_audit_and_prefers_the_ghsa_alias(tmp_path, monkeypat
         ("cryptography", ["49.0.0"], "PYSEC-2026-3552", ["50.0.0"]),
     ]
     assert uv.calls[0][:2] == ["uv", "export"] and "--frozen" in uv.calls[0]
+    # A workspace is audited whole: the root's own export omits every member's dependencies.
+    assert "--all-packages" in uv.calls[0] and "--no-emit-workspace" in uv.calls[0]
+    assert "--no-emit-project" not in uv.calls[0]
     assert "--no-deps" in uv.calls[1] and "--disable-pip" in uv.calls[1]
     assert not (root / ".pin-override-export.txt").exists()      # cleaned up
 

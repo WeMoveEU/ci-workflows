@@ -734,6 +734,12 @@ def uv_audit(root: Path) -> list[dict]:
     """pip-audit over a frozen `uv export`: one entry per (package, advisory).
 
     The export is what the image installs from, so this audits exactly what ships.
+    `--all-packages --no-emit-workspace` is what keeps that true of a uv WORKSPACE: the
+    root project's own export leaves out every member's dependencies — bankimporter's
+    `backend` member is 33 of its 73 pinned lines, fastapi and sqlalchemy among them, and
+    the first release of this pass never saw them — while the members themselves are
+    local paths pip-audit has nothing to say about. On a single project the two flags
+    change nothing (ecm: 61 lines either way).
     `--no-deps --disable-pip` keeps pip-audit from resolving anything itself; the lock
     already did. pip-audit exits 1 whenever it finds something, so the return code is not
     an error — a body that is not JSON is, and it is raised rather than read as "clean".
@@ -742,8 +748,8 @@ def uv_audit(root: Path) -> list[dict]:
     """
     req = root / ".pin-override-export.txt"
     try:
-        proc = run(["uv", "export", "--frozen", "--no-hashes", "--no-emit-project",
-                    "-o", str(req)], root)
+        proc = run(["uv", "export", "--frozen", "--no-hashes", "--all-packages",
+                    "--no-emit-workspace", "-o", str(req)], root)
         if proc.returncode != 0:
             raise SystemExit("uv export failed:\n" + (proc.stderr or proc.stdout)[-2000:])
         proc = run(["uv", "run", "--no-project", "--with", "pip-audit", "pip-audit",
