@@ -25,6 +25,13 @@ updates:
     groups:
       github-actions-minor-patch:
         update-types: ["minor", "patch"]
+      # Security updates are a separate stream; without this group they arrive one PR per
+      # advisory, which is what built the queues that got bulk-closed. A GROUPED PR is also
+      # the only kind `@dependabot unignore` works on. Canonical shape: dependency-policy
+      # templates/tier*.yml.
+      github-actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
     ignore:
       # No major PRs at all. `ignore` covers version updates only, so a
       # security major can still open one — the auto-merge workflow's
