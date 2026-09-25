@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case: [defaults, pass, smoke-fails, log-matches]
+        case: [defaults, pass, smoke-fails, log-matches, bad-regex]
     steps:
       - uses: actions/checkout@v7
       - name: Write test image
@@ -37,7 +37,7 @@ jobs:
           dockerfile: /tmp/img/Dockerfile
           context: /tmp/img
           smoke-command: |
-            echo "base=$SMOKE_BASE_URL pwd=$PWD"
+            echo "base=$SMOKE_BASE_URL"; pwd
             curl -fsS "$SMOKE_BASE_URL/" >/dev/null
           fail-on-log-pattern: "MODULE_NOT_FOUND|Cannot find module"
 
@@ -65,10 +65,25 @@ jobs:
           smoke-command: curl -s "$SMOKE_BASE_URL/missing" >/dev/null
           fail-on-log-pattern: "GET /missing"
 
+      - name: bad-regex
+        id: bad_regex
+        if: matrix.case == 'bad-regex'
+        continue-on-error: true
+        uses: ./.github/actions/docker-smoke
+        with:
+          host: example.org
+          dockerfile: /tmp/img/Dockerfile
+          context: /tmp/img
+          fail-on-log-pattern: "(unclosed"
+
+      - name: expect bad-regex failure
+        if: matrix.case == 'bad-regex'
+        run: '[ "${{ steps.bad_regex.outcome }}" = failure ]'
+
       - name: expect failure
         if: matrix.case == 'smoke-fails' || matrix.case == 'log-matches'
         env:
-          OUTCOME: ${{ steps.smoke_fails.outcome }}${{ steps.log_matches.outcome }}
+          OUTCOME: ${{ matrix.case == 'smoke-fails' && steps.smoke_fails.outcome || steps.log_matches.outcome }}
         run: |
           echo "outcome=$OUTCOME"
           [ "$OUTCOME" = failure ]

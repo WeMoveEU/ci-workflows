@@ -133,8 +133,9 @@ runs:
           echo "::error::Could not read the container log"
           exit 1
         fi
-        matches=$(printf '%s\n' "$logs" | grep -E -- "$SMOKE_LOG_PATTERN")
-        rc=$?
+        # The runner's bash has -e, so capture grep's status (1 = no match)
+        # without letting it end the script.
+        matches=$(printf '%s\n' "$logs" | grep -E -- "$SMOKE_LOG_PATTERN") && rc=0 || rc=$?
         if [ "$rc" -eq 0 ]; then
           printf '%s\n' "$matches"
           echo "::error::The container log matches fail-on-log-pattern: ${SMOKE_LOG_PATTERN}"
