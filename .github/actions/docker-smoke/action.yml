@@ -8,9 +8,15 @@
 #      under its real hostname (e.g. Vite's preview `allowedHosts` rejecting an
 #      unlisted Host with 403) — caught by curling with `Host: <host>`.
 #
-# Used as a STEP inside a job named `ci` so the required-status-check context
-# stays exactly `ci` (a reusable workflow would produce `ci / <job>` and break
-# the org ruleset's required-check match).
+# Optionally, `smoke-command` runs a deeper check against the running container
+# (e.g. a crawl of every page), and `fail-on-log-pattern` fails on server log
+# lines such as a missing module that a page may swallow while still answering
+# 200. Whenever a step fails, the last 200 lines of the container log are
+# printed.
+#
+# Used as a STEP inside the job whose name is the required status check (`ci`
+# under the org ruleset) so the context stays exactly that name (a reusable
+# workflow would produce `ci / <job>` and break the required-check match).
 name: Docker image smoke test
 description: Build the Docker image, run it, and assert it serves the production Host with the expected HTTP status.
 
@@ -50,6 +56,22 @@ inputs:
       the Dockerfile needs) without requiring the container to serve.
     required: false
     default: "false"
+  smoke-command:
+    description: >-
+      Shell command run with bash after the Host-header probe succeeds, from the
+      workspace root, with SMOKE_BASE_URL=http://localhost:<port> in its
+      environment. A non-zero exit fails the action. Empty (the default) skips
+      it. Ignored when build-only is "true".
+    required: false
+    default: ""
+  fail-on-log-pattern:
+    description: >-
+      Extended regex (grep -E). After the probe and smoke-command, the action
+      fails if the container log matches it, e.g.
+      "MODULE_NOT_FOUND|Cannot find module". Empty (the default) skips the
+      check. Ignored when build-only is "true".
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -88,9 +110,49 @@ runs:
           sleep 3
         done
         echo "::error::Smoke test failed: got HTTP ${code} for Host: ${SMOKE_HOST}${SMOKE_PATH} (expected ${SMOKE_EXPECTED})"
-        echo "=== container logs ==="
-        docker logs ci-smoke || true
         exit 1
+
+    # The command is caller-supplied, so it goes through `env` and is run by an
+    # inner bash, never spliced into this script body.
+    - name: Run smoke command
+      if: ${{ inputs.build-only != 'true' && inputs.smoke-command != '' }}
+      shell: bash
+      env:
+        SMOKE_COMMAND: ${{ inputs.smoke-command }}
+        SMOKE_BASE_URL: http://localhost:${{ inputs.port }}
+      run: bash -eo pipefail -c "$SMOKE_COMMAND"
+
+    - name: Check container log
+      if: ${{ inputs.build-only != 'true' && inputs.fail-on-log-pattern != '' }}
+      shell: bash
+      env:
+        SMOKE_LOG_PATTERN: ${{ inputs.fail-on-log-pattern }}
+      run: |
+        set -uo pipefail
+        if ! logs=$(docker logs ci-smoke 2>&1); then
+          echo "::error::Could not read the container log"
+          exit 1
+        fi
+        matches=$(printf '%s\n' "$logs" | grep -E -- "$SMOKE_LOG_PATTERN")
+        rc=$?
+        if [ "$rc" -eq 0 ]; then
+          printf '%s\n' "$matches"
+          echo "::error::The container log matches fail-on-log-pattern: ${SMOKE_LOG_PATTERN}"
+          exit 1
+        elif [ "$rc" -ne 1 ]; then
+          echo "::error::grep failed on fail-on-log-pattern: ${SMOKE_LOG_PATTERN}"
+          exit 1
+        fi
+        echo "✓ No container log line matches: ${SMOKE_LOG_PATTERN}"
+
+    - name: Container logs
+      if: ${{ failure() && inputs.build-only != 'true' }}
+      shell: bash
+      run: |
+        if docker container inspect ci-smoke >/dev/null 2>&1; then
+          echo "=== last 200 lines of the container log ==="
+          docker logs --tail 200 ci-smoke 2>&1 || true
+        fi
 
     - name: Tear down container
       if: ${{ always() && inputs.build-only != 'true' }}

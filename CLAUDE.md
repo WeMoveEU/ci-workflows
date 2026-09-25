@@ -24,7 +24,7 @@ uses: WemoveEU/ci-workflows/.github/workflows/docker-build.yml@v14
 - **deploy-strapi.yml** — Orchestrates a Strapi deploy by calling `docker-build.yml` twice: backend first (`backend/Dockerfile`, image `<repo>/backend`), then frontend (`frontend/Dockerfile`, image `<repo>/frontend`). Between them, `wait-for-backend` polls the live backend until ready.
 - **notify.yml** — Posts a Slack notification (green on success, red on failure) via `slackapi/slack-github-action`. Requires the `slack_webhook_url` secret. Call it as a final step from a caller workflow.
 - **python-build.yml** — Builds a Python package with `uv` (`astral-sh/setup-uv` + `uv build`).
-- **docker-smoke** (`.github/actions/docker-smoke`) — Composite action (not a reusable workflow). Builds the Docker image, runs it, and probes it with the production `Host` header to catch build breaks and hostname-dependent serving failures. Used as a step inside a job named `ci` (so the required-status-check context stays exactly `ci`). Supports `build-only` for apps that can't boot standalone in CI.
+- **docker-smoke** (`.github/actions/docker-smoke`) — Composite action (not a reusable workflow). Builds the Docker image, runs it, and probes it with the production `Host` header to catch build breaks and hostname-dependent serving failures. Used as a step inside a job named `ci` (so the required-status-check context stays exactly `ci`). Supports `build-only` for apps that can't boot standalone in CI, and optional `smoke-command` / `fail-on-log-pattern` for deeper checks after the probe.
 
 ## Architecture Notes (the non-obvious parts)
 
