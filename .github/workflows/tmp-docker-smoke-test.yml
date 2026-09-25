@@ -1,0 +1,75 @@
+name: tmp docker-smoke test
+
+# Temporary: exercises the docker-smoke inputs on this PR. Removed before merge.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [defaults, pass, smoke-fails, log-matches]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Write test image
+        run: |
+          mkdir -p /tmp/img
+          printf 'FROM python:3-alpine\nCMD ["python", "-u", "-m", "http.server", "8080"]\n' > /tmp/img/Dockerfile
+
+      - name: defaults
+        if: matrix.case == 'defaults'
+        uses: ./.github/actions/docker-smoke
+        with:
+          host: example.org
+          dockerfile: /tmp/img/Dockerfile
+          context: /tmp/img
+
+      - name: pass
+        if: matrix.case == 'pass'
+        uses: ./.github/actions/docker-smoke
+        with:
+          host: example.org
+          dockerfile: /tmp/img/Dockerfile
+          context: /tmp/img
+          smoke-command: |
+            echo "base=$SMOKE_BASE_URL pwd=$PWD"
+            curl -fsS "$SMOKE_BASE_URL/" >/dev/null
+          fail-on-log-pattern: "MODULE_NOT_FOUND|Cannot find module"
+
+      - name: smoke-fails
+        id: smoke_fails
+        if: matrix.case == 'smoke-fails'
+        continue-on-error: true
+        uses: ./.github/actions/docker-smoke
+        with:
+          host: example.org
+          dockerfile: /tmp/img/Dockerfile
+          context: /tmp/img
+          smoke-command: curl -fsS "$SMOKE_BASE_URL/missing"
+          fail-on-log-pattern: "MODULE_NOT_FOUND"
+
+      - name: log-matches
+        id: log_matches
+        if: matrix.case == 'log-matches'
+        continue-on-error: true
+        uses: ./.github/actions/docker-smoke
+        with:
+          host: example.org
+          dockerfile: /tmp/img/Dockerfile
+          context: /tmp/img
+          smoke-command: curl -s "$SMOKE_BASE_URL/missing" >/dev/null
+          fail-on-log-pattern: "GET /missing"
+
+      - name: expect failure
+        if: matrix.case == 'smoke-fails' || matrix.case == 'log-matches'
+        env:
+          OUTCOME: ${{ steps.smoke_fails.outcome }}${{ steps.log_matches.outcome }}
+        run: |
+          echo "outcome=$OUTCOME"
+          [ "$OUTCOME" = failure ]
+          ! docker container inspect ci-smoke >/dev/null 2>&1
