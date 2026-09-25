@@ -232,9 +232,13 @@ image-build breaks (e.g. a base-image bump dropping a tool the Dockerfile needs)
 runtime serving breaks that only appear under the real hostname (e.g. a preview server's
 `allowedHosts` rejecting an unlisted Host with 403).
 
-Use it as a **step** inside a job named `ci` so the required-status-check context stays
-exactly `ci` (a reusable workflow would produce `ci / <job>` and break an org ruleset's
-required-check match).
+Use it as a **step** inside the job whose name is the required status check (`ci` under the
+org ruleset) so the context stays exactly that name (a reusable workflow would produce
+`ci / <job>` and break the required-check match).
+
+With `smoke-command` it also runs a deeper check against the running container, and with
+`fail-on-log-pattern` it fails on server log lines that a page can swallow while still
+answering 200. Whenever a step fails, the last 200 lines of the container log are printed.
 
 ### Inputs
 
@@ -246,6 +250,8 @@ required-check match).
 - **context**: Docker build context. Default `.`.
 - **startup-timeout**: Seconds to wait for the container to start responding. Default `90`.
 - **build-only**: When `"true"`, only build the image and skip running/probing it. Use for apps that can't boot standalone in CI (need runtime secrets, a database, etc.). Default `"false"`.
+- **smoke-command**: Shell command run with bash after the probe succeeds, from the workspace root, with `SMOKE_BASE_URL=http://localhost:<port>` in its environment. A non-zero exit fails the action. Default `""` (skipped).
+- **fail-on-log-pattern**: Extended regex (`grep -E`). After the probe and `smoke-command`, the action fails if the container log matches it, e.g. `"MODULE_NOT_FOUND|Cannot find module"`. Default `""` (skipped).
 
 ### Sample usage
 
@@ -261,6 +267,20 @@ jobs:
           port: "3000"
 ```
 
+With a smoke script and a log check (a Next.js frontend in `frontend/`):
+
+```yaml
+      - uses: WeMoveEU/ci-workflows/.github/actions/docker-smoke@v14
+        with:
+          dockerfile: frontend/Dockerfile
+          context: frontend
+          host: example.org
+          port: "3000"
+          path: /en
+          smoke-command: node frontend/scripts/smoke-test.mjs "$SMOKE_BASE_URL"
+          fail-on-log-pattern: "MODULE_NOT_FOUND|Cannot find module"
+```
+
 ---
 
 ## Releases
@@ -268,6 +288,7 @@ jobs:
 Version tags `v1`–`v13` predate the current scheme and are frozen point releases. The
 floating-major convention (see [`RELEASING.md`](RELEASING.md)) starts at **`v14`**.
 
+- **v14.8** — `docker-smoke`: optional `smoke-command` (runs after the probe with `SMOKE_BASE_URL` set; its failure fails the action) and `fail-on-log-pattern` (fails when the container log matches an extended regex). The last 200 lines of the container log are now printed when any step fails, not only the probe. Existing callers are unaffected.
 - **v14.6** — `pin-override` action: a first pass re-resolves every alerted package inside the ranges the tree already declares (`yarn up -R <pkg>`, lockfile only, manifest untouched) before any resolution is written. This is what clears a package installed at several versions, which Dependabot cannot fix, and a fix a hand-closed Dependabot PR taught Dependabot to ignore. Measured across the fleet on 2026-09-11: 220 audit findings to 102. New `bumped` output; `changed` is true when either pass changed something.
 - **v14.5** — `pin-override` composite action: writes Yarn `resolutions` for the transitive advisories Dependabot cannot fix when a parent pins the vulnerable package exactly.
 - **v14.2** — `dependabot-auto-merge.yml`: arming is now retried (5 attempts) with a direct-merge fallback, so a transient GraphQL error no longer strands a PR and an already-green PR still merges. Consolidates logic that existed only in the inline copies in wemove.eu, youmove, wemove-charity.eu and pubstatic, which this lets them drop.
