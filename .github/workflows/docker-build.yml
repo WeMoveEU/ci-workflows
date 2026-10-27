@@ -113,3 +113,11 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ inputs.args }}
+          # Layer cache in the caller repo's Actions cache (free, 10 GB per
+          # repo, LRU), one scope per image so repos that build several
+          # images don't evict each other. `mode=max` also caches the build
+          # stages (deps install, compile), which is where the minutes go when
+          # the lockfile hasn't changed. Added 2026-10-27 for the Actions
+          # budget; without it every release build started from nothing.
+          cache-from: type=gha,scope=${{ inputs.name }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.name }}
