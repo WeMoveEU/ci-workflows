@@ -17,11 +17,11 @@ updates:
       time: "03:00"
       timezone: "Etc/UTC"
     open-pull-requests-limit: 10
-    # A version must be 7 days old before a PR opens — supply-chain gate; most
+    # A version must be 3 days old before a PR opens — supply-chain gate; most
     # compromised packages are yanked within 24-72h. Version updates only:
     # security updates deliberately ignore it.
     cooldown:
-      default-days: 7
+      default-days: 3
     groups:
       github-actions-minor-patch:
         update-types: ["minor", "patch"]
