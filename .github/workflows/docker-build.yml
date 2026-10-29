@@ -28,6 +28,10 @@ on:
         description: "Name of the production branch"
         type: string
         default: "main"
+      cache:
+        description: "Save and reuse the BuildKit layer cache in the Actions cache"
+        type: boolean
+        default: true
     secrets:
       personal_token:
         description: "Optional personal token used to checkout private repositories (current and submodules)"
@@ -119,5 +123,10 @@ jobs:
           # stages (deps install, compile), which is where the minutes go when
           # the lockfile hasn't changed. Added 2026-10-27 for the Actions
           # budget; without it every release build started from nothing.
-          cache-from: type=gha,scope=${{ inputs.name }}
-          cache-to: type=gha,mode=max,scope=${{ inputs.name }}
+          # `cache: false` skips it where saving costs more than it gives back.
+          # wemove.eu prerenders 660 pages on every publish, so only the install
+          # (~31s) is reused, while saving the cache takes 60-70s (175s when the
+          # lockfile changed). Measured 2026-10-29; on youmove saving takes 15s,
+          # so it keeps the cache.
+          cache-from: ${{ inputs.cache && format('type=gha,scope={0}', inputs.name) || '' }}
+          cache-to: ${{ inputs.cache && format('type=gha,mode=max,scope={0}', inputs.name) || '' }}

@@ -52,6 +52,8 @@ supports staging and production environments via its tagging strategy.
 
 - **production_branch**: The name of the production branch. Default `main`.
 
+- **cache**: Save and reuse the BuildKit layer cache in the caller repo's Actions cache. Default `true`. Set `false` when saving the cache takes longer than it saves: wemove.eu reruns its 660-page prerender on every publish, so only the ~31s install is reused while saving takes 60-70s.
+
 ### Secrets
 
 - **personal_token**: Optional personal access token used to check out private repositories and submodules. Falls back to `github.token` when not provided.
@@ -288,6 +290,7 @@ With a smoke script and a log check (a Next.js frontend in `frontend/`):
 Version tags `v1`–`v13` predate the current scheme and are frozen point releases. The
 floating-major convention (see [`RELEASING.md`](RELEASING.md)) starts at **`v14`**.
 
+- **v14.9.1** — `docker-build.yml`: `cache` input (default `true`). `false` skips the BuildKit layer cache, for callers whose expensive stage reruns on every build; wemove.eu uses it. Existing callers are unaffected.
 - **v14.9** — `docker-build.yml`: BuildKit layer cache in the caller repo's Actions cache (`cache-from`/`cache-to: type=gha`, `mode=max`, scope = image name). A rebuild with an unchanged lockfile reuses the dependency and build stages instead of starting from nothing. No input changes; callers on `@v14` pick it up.
 - **v14.8** — `docker-smoke`: optional `smoke-command` (runs after the probe with `SMOKE_BASE_URL` set; its failure fails the action) and `fail-on-log-pattern` (fails when the container log matches an extended regex). The last 200 lines of the container log are now printed when any step fails, not only the probe. Existing callers are unaffected.
 - **v14.6** — `pin-override` action: a first pass re-resolves every alerted package inside the ranges the tree already declares (`yarn up -R <pkg>`, lockfile only, manifest untouched) before any resolution is written. This is what clears a package installed at several versions, which Dependabot cannot fix, and a fix a hand-closed Dependabot PR taught Dependabot to ignore. Measured across the fleet on 2026-09-11: 220 audit findings to 102. New `bumped` output; `changed` is true when either pass changed something.
